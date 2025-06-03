@@ -40,6 +40,8 @@ class DirectRestManager:
                     verify=self.config.SSL_VERIFY
                 )
                 if response.status_code == 200:
+                    logger.info(f"DEBUG: Reusing existing session for {switch_ip}")
+                    logger.info(f"DEBUG: Existing session cookies: {session.cookies}")
                     return session
             except Exception:
                 # Session expired or invalid, remove and create new one
@@ -53,6 +55,11 @@ class DirectRestManager:
         auth_url = f"{self._get_base_url(switch_ip)}/login"
         auth_data = f"username={self.config.SWITCH_USER}&password={self.config.SWITCH_PASSWORD}"
         
+        logger.info(f"DEBUG: Creating new session for {switch_ip}")
+        logger.info(f"DEBUG: Auth URL: {auth_url}")
+        logger.info(f"DEBUG: Auth data: username={self.config.SWITCH_USER}&password=***")
+        logger.info(f"DEBUG: SSL Verify: {self.config.SSL_VERIFY}")
+        
         try:
             response = session.post(
                 auth_url,
@@ -61,11 +68,17 @@ class DirectRestManager:
                 timeout=10
             )
             
+            logger.info(f"DEBUG: Auth response status: {response.status_code}")
+            logger.info(f"DEBUG: Auth response headers: {response.headers}")
+            logger.info(f"DEBUG: Auth response cookies: {session.cookies}")
+            logger.info(f"DEBUG: Auth response body: {response.text[:200]}...")
+            
             if response.status_code == 200:
                 # Check if we got a session cookie
                 if 'Set-Cookie' in response.headers or session.cookies:
                     self.sessions[switch_ip] = session
                     logger.info(f"Successfully authenticated to {switch_ip} via form login")
+                    logger.info(f"Final session cookies: {session.cookies}")
                     return session
                 else:
                     raise Exception("Authentication succeeded but no session cookie received")
@@ -80,17 +93,6 @@ class DirectRestManager:
             error_msg = f"Connection error during authentication: {str(e)}"
             logger.error(error_msg)
             raise Exception(error_msg)
-    
-    def _logout(self, switch_ip: str):
-        """Logout and clean up session to avoid session limits."""
-        if switch_ip in self.sessions:
-            try:
-                session = self.sessions[switch_ip]
-                session.post(f"{self._get_base_url(switch_ip)}/logout", timeout=5)
-            except Exception:
-                pass  # Ignore logout errors
-            finally:
-                self.sessions.pop(switch_ip, None)
     
     def test_connection(self, switch_ip: str) -> Dict[str, Any]:
         """Test connection to switch using direct REST API."""
@@ -192,7 +194,7 @@ class DirectRestManager:
             raise Exception(error_msg)
     
     def create_vlan(self, switch_ip: str, vlan_id: int, name: str) -> str:
-        """Create VLAN using direct REST API."""
+        """Create VLAN using direct REST API - FIXED VERSION."""
         # Input validation
         if not (1 <= vlan_id <= 4094):
             raise ValueError(f"VLAN ID must be between 1 and 4094, got {vlan_id}")
@@ -207,27 +209,32 @@ class DirectRestManager:
             
             # Check if VLAN already exists
             check_response = session.get(
-                f"{self._get_base_url(switch_ip)}/system/vlans/{vlan_id}",
-                timeout=10
+                f"https://{switch_ip}/rest/v1/system/vlans/{vlan_id}",
+                timeout=10,
+                verify=self.config.SSL_VERIFY
             )
             
             if check_response.status_code == 200:
                 logger.info(f"VLAN {vlan_id} already exists on {switch_ip}")
                 return f"VLAN {vlan_id} already exists on {switch_ip}"
             
-            # Create VLAN
+            # Create VLAN using POST to collection endpoint (FIXED!)
             vlan_data = {
                 "name": name,
+                "id": vlan_id,
+                "type": "static", 
                 "admin": "up"
             }
             
-            response = session.put(
-                f"{self._get_base_url(switch_ip)}/system/vlans/{vlan_id}",
+            # Use POST to /system/vlans (NOT PUT to /system/vlans/ID)
+            response = session.post(
+                f"https://{switch_ip}/rest/v1/system/vlans",  # Collection endpoint
                 json=vlan_data,
-                timeout=10
+                timeout=10,
+                verify=self.config.SSL_VERIFY
             )
             
-            if response.status_code in [200, 201]:
+            if response.status_code == 201:  # 201 Created
                 logger.info(f"Successfully created VLAN {vlan_id} ({name}) on {switch_ip}")
                 inventory.update_switch_status(switch_ip, "online")
                 return f"Successfully created VLAN {vlan_id} ('{name}') on {switch_ip}"
@@ -240,6 +247,12 @@ class DirectRestManager:
             error_msg = f"Error creating VLAN {vlan_id} on {switch_ip}: {str(e)}"
             logger.error(error_msg)
             raise Exception(error_msg)
+
+    def _get_base_url(self, switch_ip: str) -> str:
+        """Get base URL for REST API - UPDATED FOR v1."""
+        return f"https://{switch_ip}/rest/v1"  # Changed from v10.09 to v1
+
+        
     
     def delete_vlan(self, switch_ip: str, vlan_id: int) -> str:
         """Delete VLAN using direct REST API."""

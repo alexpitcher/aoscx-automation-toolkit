@@ -336,3 +336,29 @@ if __name__ == '__main__':
         port=5001,
         debug=Config.FLASK_DEBUG
     )
+    
+@app.route('/debug/test-auth/<switch_ip>', methods=['GET'])
+def test_authentication_debug(switch_ip: str):
+    """Debug authentication to see what's happening."""
+    try:
+        session = direct_rest_manager._authenticate(switch_ip)
+        
+        # Try to get system info
+        response = session.get(
+            f"https://{switch_ip}/rest/v10.09/system",
+            timeout=10,
+            verify=Config.SSL_VERIFY
+        )
+        
+        return jsonify({
+            'auth_success': True,
+            'session_cookies': str(session.cookies),
+            'system_request_status': response.status_code,
+            'system_request_response': response.text[:500] if response.status_code == 200 else response.text
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'auth_success': False,
+            'error': str(e)
+        }), 500
