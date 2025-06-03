@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced PyAOS-CX Automation Toolkit</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <h1>Enhanced PyAOS-CX Automation Toolkit</h1>
+        <p>Multi-switch network automation for Aruba CX switches</p>
+    </header>
+
+    <!-- Alert Container -->
+    <div id="alert-container" style="position: fixed; top: 80px; right: 20px; z-index: 1000; max-width: 400px;"></div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Left Column: Switch Management & VLANs -->
+        <div>
+            <!-- Switch Inventory Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h2 class="card-title">Switch Inventory</h2>
+                        <p class="card-subtitle">Manage your Aruba CX switches</p>
+                    </div>
+                </div>
+
+                <!-- Add Switch Form -->
+                <form id="add-switch-form" class="form-grid mb-2">
+                    <div class="form-group">
+                        <label for="switch-ip" class="form-label">Switch IP Address</label>
+                        <input 
+                            type="text" 
+                            id="switch-ip" 
+                            name="switch_ip" 
+                            class="form-input" 
+                            placeholder="e.g., 10.202.0.208"
+                            pattern="^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
+                            required
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label for="switch-name" class="form-label">Switch Name (Optional)</label>
+                        <input 
+                            type="text" 
+                            id="switch-name" 
+                            name="switch_name" 
+                            class="form-input" 
+                            placeholder="e.g., Core Switch 1"
+                        >
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" id="add-switch-btn" class="btn btn-primary">
+                            Add Switch
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Switches Display -->
+                <div id="switches-container">
+                    <div class="text-center">
+                        <div class="loading"></div>
+                        <p>Loading switches...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VLAN Management Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h2 class="card-title">VLAN Management</h2>
+                        <p class="card-subtitle">Create and manage VLANs across your switches</p>
+                    </div>
+                </div>
+
+                <!-- Switch Selector -->
+                <div class="form-group mb-2">
+                    <label for="switch-selector" class="form-label">Target Switch</label>
+                    <select id="switch-selector" class="form-input">
+                        <option value="">Loading switches...</option>
+                    </select>
+                </div>
+
+                <!-- VLAN Operations -->
+                <div class="form-grid">
+                    <!-- List VLANs -->
+                    <div class="form-group">
+                        <form id="vlan-list-form">
+                            <button type="submit" id="list-vlans-btn" class="btn btn-secondary">
+                                List VLANs
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Create VLAN Form -->
+                    <div>
+                        <form id="vlan-create-form" class="form-grid">
+                            <div class="form-group">
+                                <label for="vlan-id" class="form-label">VLAN ID</label>
+                                <input 
+                                    type="number" 
+                                    id="vlan-id" 
+                                    name="vlan_id" 
+                                    class="form-input" 
+                                    placeholder="e.g., 100"
+                                    min="1" 
+                                    max="4094"
+                                    required
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="vlan-name" class="form-label">VLAN Name</label>
+                                <input 
+                                    type="text" 
+                                    id="vlan-name" 
+                                    name="vlan_name" 
+                                    class="form-input" 
+                                    placeholder="e.g., Production"
+                                    required
+                                >
+                            </div>
+                            <div class="form-group">
+                                <button type="submit" id="create-vlan-btn" class="btn btn-success">
+                                    Create VLAN
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- VLANs Display -->
+                <div id="vlans-container" class="mt-2">
+                    <div class="table-empty">
+                        <p>Select a switch and click "List VLANs" to view VLANs</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Quick Stats & Operations -->
+        <div>
+            <!-- Quick Stats Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Network Overview</h3>
+                </div>
+                
+                <div class="form-grid">
+                    <div class="text-center">
+                        <h4 id="switch-count" class="mb-0">0</h4>
+                        <p class="text-secondary">Total Switches</p>
+                    </div>
+                    <div class="text-center">
+                        <h4 id="online-count" class="mb-0 text-success">0</h4>
+                        <p class="text-secondary">Online</p>
+                    </div>
+                    <div class="text-center">
+                        <h4 id="offline-count" class="mb-0 text-error">0</h4>
+                        <p class="text-secondary">Offline</p>
+                    </div>
+                    <div class="text-center">
+                        <h4 id="vlan-count" class="mb-0">0</h4>
+                        <p class="text-secondary">VLANs (Current Switch)</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Operations Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Quick Operations</h3>
+                </div>
+                
+                <div class="form-grid">
+                    <button class="btn btn-secondary" onclick="dashboard.refreshAllSwitches()">
+                        Refresh All Switches
+                    </button>
+                    <button class="btn btn-secondary" onclick="dashboard.exportConfiguration()">
+                        Export Configuration
+                    </button>
+                    <button class="btn btn-secondary" onclick="dashboard.viewAuditLog()">
+                        View Audit Log
+                    </button>
+                    <button class="btn btn-primary" onclick="dashboard.generateAnsible()">
+                        Generate Ansible
+                    </button>
+                </div>
+            </div>
+
+            <!-- Connection Status Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Connection Status</h3>
+                </div>
+                
+                <div id="connection-status">
+                    <p class="text-secondary">Monitor switch connectivity in real-time</p>
+                    <div class="alert alert-warning">
+                        <strong>Production Mode:</strong> Backup and validation enabled for all operations
+                    </div>
+                </div>
+            </div>
+
+            <!-- Help Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Getting Started</h3>
+                </div>
+                
+                <div class="text-secondary">
+                    <ol style="padding-left: 1.5rem; line-height: 1.8;">
+                        <li>Add your Aruba CX switches using their management IP addresses</li>
+                        <li>Test connections to ensure switches are reachable</li>
+                        <li>Select a switch to view and manage VLANs</li>
+                        <li>Use bulk operations for multi-switch configurations</li>
+                        <li>Generate Ansible playbooks for automation workflows</li>
+                    </ol>
+                    
+                    <div class="mt-2">
+                        <p><strong>Safety Features:</strong></p>
+                        <ul style="padding-left: 1.5rem;">
+                            <li>Configuration backup before changes</li>
+                            <li>Input validation and sanitization</li>
+                            <li>Operation audit logging</li>
+                            <li>Rollback capabilities</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
