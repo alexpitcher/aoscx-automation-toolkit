@@ -4,7 +4,7 @@ Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 import logging
 from flask import Flask, request, jsonify, render_template
 from typing import Dict, Any
-
+import requests
 from config.settings import Config
 from config.switch_inventory import inventory, SwitchInfo
 from core.direct_rest_manager import direct_rest_manager
@@ -105,11 +105,11 @@ def test_switch_connection(switch_ip: str):
             'error_message': str(e)
         })
 
-# VLAN management endpoints
 @app.route('/api/vlans', methods=['GET'])
 def get_vlans():
-    """Get VLANs from a specific switch."""
+    """Get VLANs from a specific switch with detailed names."""
     switch_ip = request.args.get('switch_ip')
+    load_details = request.args.get('load_details', 'true').lower() == 'true'
     
     if not switch_ip:
         return jsonify({'error': 'switch_ip parameter is required'}), 400
@@ -118,15 +118,26 @@ def get_vlans():
         return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
     
     try:
-        vlans = direct_rest_manager.list_vlans(switch_ip)
+        # Enable detailed loading by default for better UX
+        vlans = direct_rest_manager.list_vlans(switch_ip, load_details=load_details)
         return jsonify({'vlans': vlans})
     except Exception as e:
         logger.error(f"Error listing VLANs on {switch_ip}: {e}")
-        return jsonify({'error': str(e)}), 503
+        
+        # Enhanced error messaging for Central management
+        error_msg = str(e)
+        if "Central management" in error_msg or "blocked" in error_msg:
+            return jsonify({
+                'error': error_msg,
+                'error_type': 'central_management',
+                'suggestion': 'This switch appears to be Central-managed. Use Aruba Central for VLAN operations.'
+            }), 403
+        else:
+            return jsonify({'error': error_msg}), 503
 
 @app.route('/api/vlans', methods=['POST'])
 def create_vlan():
-    """Create a VLAN on a specific switch."""
+    """Create a VLAN on a specific switch with enhanced error handling."""
     data = request.json or {}
     switch_ip = data.get('switch_ip')
     vlan_id = data.get('vlan_id')
@@ -155,7 +166,23 @@ def create_vlan():
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Error creating VLAN on {switch_ip}: {e}")
-        return jsonify({'error': str(e)}), 500
+        
+        # Enhanced error messaging for Central management
+        error_msg = str(e)
+        if "Central" in error_msg or "blocked" in error_msg or "410" in error_msg:
+            return jsonify({
+                'error': error_msg,
+                'error_type': 'central_management',
+                'suggestion': 'This switch is Central-managed. Use Aruba Central interface for VLAN creation.'
+            }), 403
+        elif "Permission denied" in error_msg or "403" in error_msg:
+            return jsonify({
+                'error': error_msg,
+                'error_type': 'permission_denied',
+                'suggestion': 'Check user permissions or Central management status.'
+            }), 403
+        else:
+            return jsonify({'error': error_msg}), 500
 
 @app.route('/api/vlans/<int:vlan_id>', methods=['DELETE'])
 def delete_vlan():
@@ -336,7 +363,7 @@ if __name__ == '__main__':
         port=5001,
         debug=Config.FLASK_DEBUG
     )
-    
+
 @app.route('/debug/test-auth/<switch_ip>', methods=['GET'])
 def test_authentication_debug(switch_ip: str):
     """Debug authentication to see what's happening."""

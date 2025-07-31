@@ -202,7 +202,7 @@ class Dashboard {
             
             const response = await fetch('/api/vlans', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     switch_ip: switchIp,
                     vlan_id: vlanId,
@@ -215,10 +215,22 @@ class Dashboard {
             if (response.ok) {
                 this.showAlert(data.message, 'success');
                 event.target.reset();
-                // Refresh VLAN list
+                // Refresh VLAN list with details
                 this.loadVlans(switchIp);
             } else {
-                this.showAlert(data.error || 'Failed to create VLAN', 'error');
+                // Enhanced error messaging based on error type
+                let errorMsg = data.error || 'Failed to create VLAN';
+                let alertType = 'error';
+                
+                if (data.error_type === 'central_management') {
+                    alertType = 'warning';
+                    errorMsg += ` ${data.suggestion || ''}`;
+                } else if (data.error_type === 'permission_denied') {
+                    alertType = 'warning';
+                    errorMsg += ` ${data.suggestion || ''}`;
+                }
+                
+                this.showAlert(errorMsg, alertType);
             }
         } catch (error) {
             this.showAlert('Error creating VLAN: ' + error.message, 'error');
@@ -229,13 +241,24 @@ class Dashboard {
 
     async loadVlans(switchIp) {
         try {
-            const response = await fetch(`/api/vlans?switch_ip=${encodeURIComponent(switchIp)}`);
+            // Always load details for better UX
+            const response = await fetch(`/api/vlans?switch_ip=${encodeURIComponent(switchIp)}&load_details=true`);
             const data = await response.json();
             
             if (response.ok) {
                 this.renderVlans(data.vlans || []);
             } else {
-                this.showAlert(data.error || 'Failed to load VLANs', 'error');
+                // Enhanced error handling
+                let errorMsg = data.error || 'Failed to load VLANs';
+                let alertType = 'error';
+                
+                if (data.error_type === 'central_management') {
+                    alertType = 'warning';
+                    // Show Central management specific message
+                    this.showAlert(`${errorMsg} ${data.suggestion || ''}`, alertType);
+                } else {
+                    this.showAlert(errorMsg, alertType);
+                }
                 this.renderVlans([]);
             }
         } catch (error) {
@@ -264,41 +287,72 @@ class Dashboard {
             return;
         }
 
-        const switchCards = Array.from(this.switches.values()).map(switch_info => `
-            <div class="switch-card">
-                <div class="switch-info">
-                    <div class="switch-details">
-                        <h4>${switch_info.name || switch_info.ip_address}</h4>
-                        <div class="switch-meta">
-                            IP: ${switch_info.ip_address}
-                            ${switch_info.firmware_version ? `• FW: ${switch_info.firmware_version}` : ''}
-                            ${switch_info.model ? `• ${switch_info.model}` : ''}
-                        </div>
-                        ${switch_info.last_seen ? `
+        const switchCards = Array.from(this.switches.values()).map(switch_info => {
+            // Determine management type styling
+            const isCentral = switch_info.is_central_managed;
+            const managementClass = isCentral ? 'central-managed' : 'standalone';
+            const managementLabel = isCentral ? 'Central Managed' : 'Standalone';
+            const managementIcon = isCentral ? '🏢' : '⚙️';
+            const capabilityText = isCentral ? 'Read-only operations' : 'Full automation available';
+            
+            return `
+                <div class="switch-card ${managementClass}">
+                    <div class="switch-info">
+                        <div class="switch-details">
+                            <h4>${switch_info.name || switch_info.ip_address}</h4>
                             <div class="switch-meta">
-                                Last seen: ${new Date(switch_info.last_seen).toLocaleString()}
+                                IP: ${switch_info.ip_address}
+                                ${switch_info.firmware_version ? `• FW: ${switch_info.firmware_version}` : ''}
+                                ${switch_info.model ? `• ${switch_info.model}` : ''}
                             </div>
-                        ` : ''}
+                            ${switch_info.management_info ? `
+                                <div class="switch-meta management-info">
+                                    ${managementIcon} ${managementLabel} - ${capabilityText}
+                                </div>
+                            ` : ''}
+                            ${switch_info.last_seen ? `
+                                <div class="switch-meta">
+                                    Last seen: ${new Date(switch_info.last_seen).toLocaleString()}
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="switch-status-container">
+                            <span class="status status-${switch_info.status}">
+                                ${switch_info.status}
+                            </span>
+                            ${isCentral ? `
+                                <span class="management-badge central-badge" title="Managed by Aruba Central - Write operations restricted">
+                                    Central
+                                </span>
+                            ` : `
+                                <span class="management-badge standalone-badge" title="Standalone switch - Full API access available">
+                                    Direct
+                                </span>
+                            `}
+                        </div>
                     </div>
-                    <span class="status status-${switch_info.status}">
-                        ${switch_info.status}
-                    </span>
-                </div>
-                <div class="flex gap-1">
-                    <button class="btn btn-secondary refresh-switch" data-switch-ip="${switch_info.ip_address}">
-                        Test Connection
-                    </button>
-                    <button class="btn btn-danger remove-switch" data-switch-ip="${switch_info.ip_address}">
-                        Remove
-                    </button>
-                </div>
-                ${switch_info.error_message ? `
-                    <div class="alert alert-error mt-1">
-                        ${switch_info.error_message}
+                    <div class="flex gap-1">
+                        <button class="btn btn-secondary refresh-switch" data-switch-ip="${switch_info.ip_address}">
+                            Test Connection
+                        </button>
+                        <button class="btn btn-danger remove-switch" data-switch-ip="${switch_info.ip_address}">
+                            Remove
+                        </button>
                     </div>
-                ` : ''}
-            </div>
-        `).join('');
+                    ${switch_info.error_message ? `
+                        <div class="alert alert-error mt-1">
+                            ${switch_info.error_message}
+                        </div>
+                    ` : ''}
+                    ${isCentral ? `
+                        <div class="alert alert-warning mt-1">
+                            <strong>Central Management Detected:</strong> This switch is managed by Aruba Central. 
+                            VLAN creation and modification are restricted. Use this interface for monitoring and Central for configuration changes.
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
 
         container.innerHTML = `<div class="switch-grid">${switchCards}</div>`;
         
@@ -306,16 +360,22 @@ class Dashboard {
         this.updateStats();
     }
 
+
     updateSwitchSelector() {
         const selector = document.getElementById('switch-selector');
         if (!selector) return;
 
         const options = Array.from(this.switches.values())
-            .map(switch_info => `
-                <option value="${switch_info.ip_address}" ${switch_info.ip_address === this.currentSwitch ? 'selected' : ''}>
-                    ${switch_info.name || switch_info.ip_address} (${switch_info.status})
-                </option>
-            `).join('');
+            .map(switch_info => {
+                const managementIndicator = switch_info.is_central_managed ? ' (Central)' : ' (Direct)';
+                const statusIndicator = switch_info.status === 'online' ? '✓' : '✗';
+                
+                return `
+                    <option value="${switch_info.ip_address}" ${switch_info.ip_address === this.currentSwitch ? 'selected' : ''}>
+                        ${statusIndicator} ${switch_info.name || switch_info.ip_address}${managementIndicator}
+                    </option>
+                `;
+            }).join('');
 
         selector.innerHTML = `
             <option value="">Select a switch...</option>
@@ -433,6 +493,8 @@ class Dashboard {
         const switchCount = this.switches.size;
         const onlineCount = Array.from(this.switches.values()).filter(s => s.status === 'online').length;
         const offlineCount = switchCount - onlineCount;
+        const centralCount = Array.from(this.switches.values()).filter(s => s.is_central_managed).length;
+        const standaloneCount = switchCount - centralCount;
         
         const switchCountEl = document.getElementById('switch-count');
         const onlineCountEl = document.getElementById('online-count');
@@ -442,10 +504,15 @@ class Dashboard {
         if (onlineCountEl) onlineCountEl.textContent = onlineCount;
         if (offlineCountEl) offlineCountEl.textContent = offlineCount;
         
+        // Update management type stats if elements exist
+        const centralCountEl = document.getElementById('central-count');
+        const standaloneCountEl = document.getElementById('standalone-count');
+        if (centralCountEl) centralCountEl.textContent = centralCount;
+        if (standaloneCountEl) standaloneCountEl.textContent = standaloneCount;
+        
         // Update VLAN count for current switch if available
         const vlanCountEl = document.getElementById('vlan-count');
         if (vlanCountEl && this.currentSwitch) {
-            // This will be updated when VLANs are loaded
             const vlansContainer = document.getElementById('vlans-container');
             const rows = vlansContainer ? vlansContainer.querySelectorAll('tbody tr').length : 0;
             vlanCountEl.textContent = rows;

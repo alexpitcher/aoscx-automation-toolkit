@@ -1,68 +1,83 @@
 #!/usr/bin/env python3
 """
-Test script to replicate the exact working curl command in Python
+Debug script to test different API version endpoints
+Run this to figure out which auth endpoints actually work
 """
 import requests
 import urllib3
 
-# Disable SSL warnings like curl -k
+# Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def test_working_auth():
-    """Replicate the exact curl command that worked"""
+def test_auth_endpoints():
+    """Test different authentication endpoints to find what works"""
     
-    # Create session like curl with -c cookies.txt
-    session = requests.Session()
-    session.verify = False  # Like curl -k
+    switch_ip = "10.202.0.37"  # Your failing switch
+    username = "admin"
+    password = "Apitche1switch"
     
-    # Step 1: Login exactly like the working curl command
-    login_url = "https://10.202.0.208/rest/v10.09/login"
-    login_data = "username=admin&password=Apitche1switch"
+    # Different API versions to test
+    api_versions = [
+        "v1",
+        "v10.04", 
+        "v10.09",
+        "v10.15",
+        "latest"
+    ]
     
-    print(f"DEBUG: Login URL: {login_url}")
-    print(f"DEBUG: Login data: {login_data}")
+    # Different auth paths to test
+    auth_paths = [
+        "login",
+        "login-sessions", 
+        "auth",
+        "session"
+    ]
     
-    login_response = session.post(
-        login_url,
-        data=login_data,  # Use data= not json=
-        headers={'Content-Type': 'application/x-www-form-urlencoded'},
-        timeout=10
-    )
-    
-    print(f"DEBUG: Login response status: {login_response.status_code}")
-    print(f"DEBUG: Login response headers: {login_response.headers}")
-    print(f"DEBUG: Login response cookies: {session.cookies}")
-    print(f"DEBUG: Login response body: {login_response.text[:200]}")
-    
-    if login_response.status_code != 200:
-        print(f"ERROR: Login failed with {login_response.status_code}")
-        return False
-    
-    # Step 2: Create VLAN exactly like working curl command
-    vlan_url = "https://10.202.0.208/rest/v10.09/system/vlans/997"
-    vlan_data = {"name": "TestPython", "admin": "up"}
-    
-    print(f"\nDEBUG: VLAN URL: {vlan_url}")
-    print(f"DEBUG: VLAN data: {vlan_data}")
-    print(f"DEBUG: Using session cookies: {session.cookies}")
-    
-    vlan_response = session.put(
-        vlan_url,
-        json=vlan_data,  # Use json= like curl -d with JSON
-        headers={'Content-Type': 'application/json'},
-        timeout=10
-    )
-    
-    print(f"DEBUG: VLAN response status: {vlan_response.status_code}")
-    print(f"DEBUG: VLAN response headers: {vlan_response.headers}")
-    print(f"DEBUG: VLAN response body: {vlan_response.text}")
-    
-    if vlan_response.status_code in [200, 201]:
-        print("SUCCESS: VLAN created successfully!")
-        return True
-    else:
-        print(f"ERROR: VLAN creation failed with {vlan_response.status_code}")
-        return False
+    for api_version in api_versions:
+        for auth_path in auth_paths:
+            print(f"\n{'='*60}")
+            print(f"Testing: https://{switch_ip}/rest/{api_version}/{auth_path}")
+            print(f"{'='*60}")
+            
+            session = requests.Session()
+            session.verify = False
+            
+            # Test form-encoded auth
+            auth_url = f"https://{switch_ip}/rest/{api_version}/{auth_path}"
+            auth_data = f"username={username}&password={password}"
+            
+            try:
+                response = session.post(
+                    auth_url,
+                    data=auth_data,
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                    timeout=10
+                )
+                
+                print(f"Status: {response.status_code}")
+                print(f"Headers: {dict(response.headers)}")
+                print(f"Cookies: {dict(session.cookies)}")
+                print(f"Body: {response.text[:200]}...")
+                
+                if response.status_code == 200:
+                    print("✅ SUCCESS - This endpoint works!")
+                    
+                    # Test if we can use this session
+                    test_url = f"https://{switch_ip}/rest/{api_version}/system"
+                    test_response = session.get(test_url, timeout=10)
+                    print(f"System endpoint test: {test_response.status_code}")
+                    
+                elif response.status_code == 410:
+                    print("❌ 410 Gone - Endpoint deprecated/removed")
+                elif response.status_code == 404:
+                    print("❌ 404 Not Found - Endpoint doesn't exist")
+                elif response.status_code == 401:
+                    print("⚠️  401 Unauthorized - Endpoint exists but auth failed")
+                else:
+                    print(f"⚠️  {response.status_code} - Unexpected response")
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Connection Error: {e}")
 
 if __name__ == "__main__":
-    test_working_auth()
+    test_auth_endpoints()
