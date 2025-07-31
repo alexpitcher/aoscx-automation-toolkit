@@ -50,6 +50,94 @@ class DirectRestManager:
         for switch_ip in switch_ips:
             self.cleanup_session(switch_ip, force_logout=True)
         logger.info("Cleaned up all sessions")
+    
+    def test_connection_with_credentials(self, switch_ip: str, username: str, password: str) -> Dict[str, Any]:
+        """Test connection to switch with specific credentials."""
+        try:
+            # Create a temporary session for testing
+            test_session = requests.Session()
+            test_session.verify = Config.SSL_VERIFY
+            
+            # Attempt authentication
+            auth_url = f"https://{switch_ip}/rest/{Config.API_VERSION}/login"
+            auth_data = {
+                'username': username,
+                'password': password or ''
+            }
+            
+            logger.debug(f"Testing authentication to {switch_ip} with username: {username}")
+            
+            auth_response = test_session.post(
+                auth_url,
+                json=auth_data,
+                timeout=10,
+                verify=Config.SSL_VERIFY
+            )
+            
+            if auth_response.status_code == 200:
+                # Test system access
+                system_url = f"https://{switch_ip}/rest/{Config.API_VERSION}/system"
+                system_response = test_session.get(
+                    system_url,
+                    timeout=10,
+                    verify=Config.SSL_VERIFY
+                )
+                
+                if system_response.status_code == 200:
+                    system_info = system_response.json()
+                    
+                    # Cleanup test session
+                    try:
+                        test_session.post(f"https://{switch_ip}/rest/{Config.API_VERSION}/logout", timeout=5)
+                    except:
+                        pass
+                    
+                    return {
+                        'status': 'online',
+                        'ip_address': switch_ip,
+                        'firmware_version': system_info.get('firmware_version', 'Unknown'),
+                        'model': system_info.get('platform_name', 'Unknown'),
+                        'last_seen': datetime.now().isoformat()
+                    }
+                else:
+                    logger.warning(f"Authentication succeeded but system access failed for {switch_ip}: {system_response.status_code}")
+                    return {
+                        'status': 'error',
+                        'ip_address': switch_ip,
+                        'error_message': f'System access failed (HTTP {system_response.status_code})'
+                    }
+            elif auth_response.status_code == 401:
+                return {
+                    'status': 'error',
+                    'ip_address': switch_ip,
+                    'error_message': 'Authentication failed - invalid credentials'
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'ip_address': switch_ip,
+                    'error_message': f'Authentication request failed (HTTP {auth_response.status_code})'
+                }
+                
+        except requests.exceptions.ConnectTimeout:
+            return {
+                'status': 'offline',
+                'ip_address': switch_ip,
+                'error_message': 'Connection timeout'
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                'status': 'offline',
+                'ip_address': switch_ip,
+                'error_message': 'Connection refused'
+            }
+        except Exception as e:
+            logger.error(f"Error testing credentials for {switch_ip}: {e}")
+            return {
+                'status': 'error',
+                'ip_address': switch_ip,
+                'error_message': str(e)
+            }
 
     def _is_session_valid(self, switch_ip: str, session: requests.Session) -> bool:
         """Check if session is still valid."""

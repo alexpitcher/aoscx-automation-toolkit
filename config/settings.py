@@ -24,19 +24,17 @@ class Config:
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
-    # Default switches
-    DEFAULT_SWITCHES = os.getenv('DEFAULT_SWITCHES', '').split(',')
-    DEFAULT_SWITCHES = [ip.strip() for ip in DEFAULT_SWITCHES if ip.strip()]
+    # Default switches - now empty to avoid dead connections
+    DEFAULT_SWITCHES = []
     
     @classmethod
     def validate(cls) -> List[str]:
         """Validate configuration and return list of errors."""
         errors = []
         
-        if not cls.SWITCH_PASSWORD:
-            errors.append("SWITCH_PASSWORD is required")
+        # SWITCH_PASSWORD is now optional since we have credential fallback
+        pass
             
-        if not cls.DEFAULT_SWITCHES:
-            errors.append("DEFAULT_SWITCHES must contain at least one IP address")
+        # Remove validation for DEFAULT_SWITCHES since we no longer require them
             
         return errors

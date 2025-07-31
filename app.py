@@ -2,7 +2,7 @@
 Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 """
 import logging
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect
 from typing import Dict, Any
 import requests
 from config.settings import Config
@@ -36,8 +36,26 @@ for switch_ip in Config.DEFAULT_SWITCHES:
 
 @app.route('/')
 def dashboard():
-    """Render the main dashboard."""
+    """Render the main dashboard with mobile detection."""
+    user_agent = request.headers.get('User-Agent', '').lower()
+    
+    # Detect mobile devices
+    mobile_indicators = ['mobile', 'android', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone']
+    is_mobile = any(indicator in user_agent for indicator in mobile_indicators)
+    
+    # Check for explicit preference or force parameter
+    force_desktop = request.args.get('desktop', '').lower() == 'true'
+    force_mobile = request.args.get('mobile', '').lower() == 'true'
+    
+    if force_mobile or (is_mobile and not force_desktop):
+        return redirect('/mobile')
+    
     return render_template('dashboard.html')
+
+@app.route('/mobile')
+def mobile_dashboard():
+    """Render the mobile-first dashboard."""
+    return render_template('mobile_dashboard.html')
 
 # Switch management endpoints
 @app.route('/api/switches', methods=['GET'])
@@ -51,10 +69,12 @@ def get_switches():
 
 @app.route('/api/switches', methods=['POST'])
 def add_switch():
-    """Add a new switch to inventory."""
+    """Add a new switch to inventory with credential handling."""
     data = request.json or {}
     ip_address = data.get('ip_address', '').strip()
     name = data.get('name', '').strip() or None
+    username = data.get('username', '').strip() or None
+    password = data.get('password', '') if data.get('password') is not None else None
     
     if not ip_address:
         return jsonify({'error': 'IP address is required'}), 400
@@ -66,16 +86,85 @@ def add_switch():
     if inventory.get_switch(ip_address):
         return jsonify({'error': f'Switch {ip_address} already exists'}), 400
     
-    # Add to inventory
-    if inventory.add_switch(ip_address, name):
-        switch_info = inventory.get_switch(ip_address)
-        logger.info(f"Added new switch: {ip_address}")
-        return jsonify({
-            'message': f'Switch {ip_address} added successfully',
-            'switch': switch_info.to_dict()
-        })
-    else:
-        return jsonify({'error': 'Failed to add switch'}), 500
+    # Try to add switch with credential fallback logic
+    try:
+        success = False
+        credentials_used = None
+        
+        if username and password is not None:
+            # User provided credentials - try them first
+            try:
+                logger.info(f"Trying user-provided credentials for {ip_address}: {username}")
+                result = direct_rest_manager.test_connection_with_credentials(ip_address, username, password)
+                logger.info(f"User credential test result for {ip_address}: status={result.get('status')}")
+                if result.get('status') == 'online':
+                    success = True
+                    credentials_used = f"{username}/***"
+                    # Store credentials for future use
+                    inventory.store_credentials(ip_address, username, password)
+            except Exception as e:
+                logger.warning(f"User-provided credentials failed for {ip_address}: {e}")
+        
+        if not success:
+            # Try default credential combinations
+            logger.info(f"Trying default credentials for {ip_address}")
+            default_credentials = [
+                ('admin', 'admin'),
+                ('admin', ''),
+                ('admin', None)
+            ]
+            
+            for try_username, try_password in default_credentials:
+                try:
+                    logger.info(f"Trying default credential {try_username}/{try_password or '(blank)'} for {ip_address}")
+                    result = direct_rest_manager.test_connection_with_credentials(ip_address, try_username, try_password)
+                    logger.info(f"Default credential test result for {ip_address}: status={result.get('status')}")
+                    if result.get('status') == 'online':
+                        success = True
+                        credentials_used = f"{try_username}/{try_password if try_password else '(blank)'}"
+                        # Store working credentials
+                        inventory.store_credentials(ip_address, try_username, try_password)
+                        break
+                except Exception as e:
+                    logger.info(f"Default credential {try_username}/{try_password or '(blank)'} failed for {ip_address}: {e}")
+                    continue
+        
+        if not success:
+            # Try any saved credentials from previous successful connections
+            saved_creds = inventory.get_saved_credentials(ip_address)
+            if saved_creds:
+                try:
+                    result = direct_rest_manager.test_connection_with_credentials(ip_address, saved_creds['username'], saved_creds['password'])
+                    if result.get('status') == 'online':
+                        success = True
+                        credentials_used = f"saved credentials"
+                except Exception as e:
+                    logger.debug(f"Saved credential failed for {ip_address}: {e}")
+        
+        if success:
+            # Add to inventory
+            if inventory.add_switch(ip_address, name):
+                switch_info = inventory.get_switch(ip_address)
+                logger.info(f"Added new switch: {ip_address} using {credentials_used}")
+                return jsonify({
+                    'message': f'Switch {ip_address} added successfully using {credentials_used}',
+                    'switch': switch_info.to_dict()
+                })
+            else:
+                return jsonify({'error': 'Failed to add switch to inventory'}), 500
+        else:
+            # All authentication attempts failed
+            logger.warning(f"All authentication attempts failed for {ip_address}")
+            error_msg = f'Failed to authenticate to switch {ip_address}. Tried default credentials (admin/admin, admin/blank) and any saved credentials. Please verify the IP address is correct and the switch is reachable.'
+            return jsonify({
+                'error': error_msg,
+                'error_type': 'authentication_failed',
+                'suggestion': 'Please check the IP address and provide correct credentials using the credentials section.'
+            }), 401
+            
+    except Exception as e:
+        logger.error(f"Error adding switch {ip_address}: {e}")
+        return jsonify({'error': f'Error adding switch: {str(e)}'}), 500
 
 @app.route('/api/switches/<switch_ip>', methods=['DELETE'])
 def remove_switch(switch_ip: str):

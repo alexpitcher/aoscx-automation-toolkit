@@ -36,6 +36,7 @@ class SwitchInventory:
     
     def __init__(self):
         self._switches: Dict[str, SwitchInfo] = {}
+        self._credentials: Dict[str, Dict[str, str]] = {}  # Store credentials per switch
         
     def add_switch(self, ip_address: str, name: Optional[str] = None) -> bool:
         """Add a switch to the inventory."""
@@ -91,6 +92,24 @@ class SwitchInventory:
             if switch.status in counts:
                 counts[switch.status] += 1
         return counts
+    
+    def store_credentials(self, switch_ip: str, username: str, password: str) -> None:
+        """Store credentials for a switch."""
+        self._credentials[switch_ip] = {
+            'username': username,
+            'password': password or ''
+        }
+        logger.debug(f"Stored credentials for switch {switch_ip}")
+    
+    def get_saved_credentials(self, switch_ip: str) -> Optional[Dict[str, str]]:
+        """Get saved credentials for a switch."""
+        return self._credentials.get(switch_ip)
+    
+    def remove_credentials(self, switch_ip: str) -> None:
+        """Remove stored credentials for a switch."""
+        if switch_ip in self._credentials:
+            del self._credentials[switch_ip]
+            logger.debug(f"Removed credentials for switch {switch_ip}")
     
     @staticmethod
     def is_valid_ip(ip_address: str) -> bool:

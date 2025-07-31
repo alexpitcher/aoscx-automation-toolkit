@@ -1,0 +1,51 @@
+{
+  "name": "AOS-CX Automation Toolkit",
+  "short_name": "AOS-CX",
+  "description": "HPE Aruba Network Management - Mobile Dashboard",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#01A982",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.png", 
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add Switch",
+      "short_name": "Add Switch",
+      "description": "Quickly add a new switch to inventory",
+      "url": "/mobile#switches",
+      "icons": [
+        {
+          "src": "/static/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Manage VLANs",
+      "short_name": "VLANs",
+      "description": "Create and manage VLANs",
+      "url": "/mobile#vlans",
+      "icons": [
+        {
+          "src": "/static/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
