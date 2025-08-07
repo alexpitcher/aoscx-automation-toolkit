@@ -2,12 +2,20 @@
 Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 """
 import logging
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, make_response
 from typing import Dict, Any
 import requests
 from config.settings import Config
 from config.switch_inventory import inventory, SwitchInfo
 from core.direct_rest_manager import direct_rest_manager
+from core.switch_manager_factory import switch_manager_factory
+from core.switch_diagnostics import run_diagnostics
+from core.exceptions import (
+    SessionLimitError, InvalidCredentialsError, ConnectionTimeoutError,
+    PermissionDeniedError, APIUnavailableError, CentralManagedError,
+    VLANOperationError, UnknownSwitchError, SwitchConnectionError
+)
+from core.api_logger import api_logger
 
 # Configure logging
 logging.basicConfig(
@@ -69,8 +77,17 @@ def get_switches():
 
 @app.route('/api/switches', methods=['POST'])
 def add_switch():
-    """Add a new switch to inventory with credential handling."""
+    """Add a new switch to inventory with support for both direct and Central connections."""
     data = request.json or {}
+    connection_type = data.get('connection_type', 'direct').strip().lower()
+    
+    if connection_type == 'central':
+        return add_central_switch(data)
+    else:
+        return add_direct_switch(data)
+
+def add_direct_switch(data):
+    """Add a direct-connected switch."""
     ip_address = data.get('ip_address', '').strip()
     name = data.get('name', '').strip() or None
     username = data.get('username', '').strip() or None
@@ -94,21 +111,53 @@ def add_switch():
         if username and password is not None:
             # User provided credentials - try them first
             try:
-                logger.info(f"Trying user-provided credentials for {ip_address}: {username}")
+                logger.info(f"Testing user-provided credentials for {ip_address}: {username}")
                 result = direct_rest_manager.test_connection_with_credentials(ip_address, username, password)
-                logger.info(f"User credential test result for {ip_address}: status={result.get('status')}")
-                if result.get('status') == 'online':
-                    success = True
-                    credentials_used = f"{username}/***"
-                    # Store credentials for future use
-                    inventory.store_credentials(ip_address, username, password)
+                logger.info(f"User credential test successful for {ip_address}")
+                success = True
+                credentials_used = f"{username}/***"
+                # Store credentials for future use
+                inventory.store_credentials(ip_address, username, password)
+                
+            except SessionLimitError as e:
+                # Handle session limit with cleanup option
+                logger.warning(f"Session limit reached for {ip_address}")
+                return jsonify({
+                    'error': str(e),
+                    'error_type': e.error_type,
+                    'suggestion': e.suggestion,
+                    'switch_ip': ip_address,
+                    'can_retry': True,
+                    'cleanup_available': True
+                }), 429  # Too Many Requests
+                
+            except (InvalidCredentialsError, PermissionDeniedError) as e:
+                # Don't try defaults for explicit credential errors
+                logger.warning(f"User credential error for {ip_address}: {e}")
+                return jsonify(e.to_dict()), 401
+                
+            except (ConnectionTimeoutError, APIUnavailableError, CentralManagedError) as e:
+                # These are not credential issues, return immediately
+                logger.error(f"Connection/API error for {ip_address}: {e}")
+                return jsonify(e.to_dict()), 503
+                
+            except UnknownSwitchError as e:
+                logger.error(f"Unknown error for {ip_address}: {e}")
+                return jsonify(e.to_dict()), 500
+                
             except Exception as e:
-                logger.warning(f"User-provided credentials failed for {ip_address}: {e}")
+                logger.error(f"Unexpected error for {ip_address}: {e}")
+                return jsonify(UnknownSwitchError(ip_address, response_text=str(e)).to_dict()), 500
         
         if not success:
-            # Try default credential combinations
-            logger.info(f"Trying default credentials for {ip_address}")
+            # Try default credentials automatically (no user credentials provided or user credentials failed)
+            if not username and password is None:
+                logger.info(f"No user credentials provided, trying default credentials for {ip_address}")
+            else:
+                logger.info(f"User credentials failed, trying default credentials for {ip_address}")
+            
             default_credentials = [
+                ('admin', 'Aruba123!'),  # Our confirmed working password
                 ('admin', 'admin'),
                 ('admin', ''),
                 ('admin', None)
@@ -121,7 +170,7 @@ def add_switch():
                     logger.info(f"Default credential test result for {ip_address}: status={result.get('status')}")
                     if result.get('status') == 'online':
                         success = True
-                        credentials_used = f"{try_username}/{try_password if try_password else '(blank)'}"
+                        credentials_used = f"default:{try_username}/{try_password if try_password else '(blank)'}"
                         # Store working credentials
                         inventory.store_credentials(ip_address, try_username, try_password)
                         break
@@ -145,26 +194,75 @@ def add_switch():
             # Add to inventory
             if inventory.add_switch(ip_address, name):
                 switch_info = inventory.get_switch(ip_address)
-                logger.info(f"Added new switch: {ip_address} using {credentials_used}")
+                logger.info(f"Successfully added switch: {ip_address} using {credentials_used}")
                 return jsonify({
+                    'status': 'success',
                     'message': f'Switch {ip_address} added successfully using {credentials_used}',
                     'switch': switch_info.to_dict()
                 })
             else:
-                return jsonify({'error': 'Failed to add switch to inventory'}), 500
+                return jsonify({
+                    'error': 'Failed to add switch to inventory',
+                    'error_type': 'internal_error',
+                    'suggestion': 'Please try again or contact administrator.'
+                }), 500
         else:
-            # All authentication attempts failed
+            # This should not happen with the new logic, but keeping as fallback
             logger.warning(f"All authentication attempts failed for {ip_address}")
-            error_msg = f'Failed to authenticate to switch {ip_address}. Tried default credentials (admin/admin, admin/blank) and any saved credentials. Please verify the IP address is correct and the switch is reachable.'
-            return jsonify({
-                'error': error_msg,
-                'error_type': 'authentication_failed',
-                'suggestion': 'Please check the IP address and provide correct credentials using the credentials section.'
-            }), 401
+            return jsonify(InvalidCredentialsError(ip_address, username or "unknown").to_dict()), 401
             
     except Exception as e:
         logger.error(f"Error adding switch {ip_address}: {e}")
         return jsonify({'error': f'Error adding switch: {str(e)}'}), 500
+
+def add_central_switch(data):
+    """Add a Central-managed switch."""
+    device_serial = data.get('device_serial', '').strip()
+    name = data.get('name', '').strip() or None
+    client_id = data.get('client_id', '').strip()
+    client_secret = data.get('client_secret', '').strip()
+    customer_id = data.get('customer_id', '').strip()
+    base_url = data.get('base_url', '').strip() or 'https://apigw-prod2.central.arubanetworks.com'
+    
+    # Validation
+    if not device_serial:
+        return jsonify({'error': 'Device serial number is required for Central-managed switches'}), 400
+    
+    if not all([client_id, client_secret, customer_id]):
+        return jsonify({'error': 'Client ID, Client Secret, and Customer ID are required for Central connection'}), 400
+    
+    # Check if Central switch already exists
+    switch_key = f"central:{device_serial}"
+    if inventory.get_switch(switch_key):
+        return jsonify({'error': f'Central device {device_serial} already exists'}), 400
+    
+    try:
+        # Test Central connection
+        if inventory.add_central_switch(device_serial, name, client_id, client_secret, customer_id, base_url):
+            switch_info = inventory.get_switch(switch_key)
+            
+            # Test the Central connection
+            result = switch_manager_factory.test_connection(switch_info)
+            
+            if result.get('status') == 'online':
+                logger.info(f"Added new Central switch: {device_serial}")
+                return jsonify({
+                    'message': f'Central device {device_serial} added successfully',
+                    'switch': switch_info.to_dict()
+                })
+            else:
+                # Remove from inventory if connection test failed
+                inventory.remove_switch(switch_key)
+                return jsonify({
+                    'error': f'Failed to connect to Central device: {result.get("error_message", "Unknown error")}',
+                    'error_type': 'central_connection_failed'
+                }), 401
+        else:
+            return jsonify({'error': 'Failed to add Central device to inventory'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error adding Central switch {device_serial}: {e}")
+        return jsonify({'error': f'Error adding Central device: {str(e)}'}), 500
 
 @app.route('/api/switches/<switch_ip>', methods=['DELETE'])
 def remove_switch(switch_ip: str):
@@ -179,12 +277,13 @@ def remove_switch(switch_ip: str):
 
 @app.route('/api/switches/<switch_ip>/test', methods=['GET'])
 def test_switch_connection(switch_ip: str):
-    """Test connection to a specific switch."""
-    if not inventory.get_switch(switch_ip):
+    """Test connection to a specific switch using appropriate manager."""
+    switch_info = inventory.get_switch(switch_ip)
+    if not switch_info:
         return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
     
     try:
-        result = direct_rest_manager.test_connection(switch_ip)
+        result = switch_manager_factory.test_connection(switch_info)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error testing connection to {switch_ip}: {e}")
@@ -196,19 +295,19 @@ def test_switch_connection(switch_ip: str):
 
 @app.route('/api/vlans', methods=['GET'])
 def get_vlans():
-    """Get VLANs from a specific switch with detailed names."""
+    """Get VLANs from a specific switch using appropriate manager."""
     switch_ip = request.args.get('switch_ip')
     load_details = request.args.get('load_details', 'true').lower() == 'true'
     
     if not switch_ip:
         return jsonify({'error': 'switch_ip parameter is required'}), 400
     
-    if not inventory.get_switch(switch_ip):
+    switch_info = inventory.get_switch(switch_ip)
+    if not switch_info:
         return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
     
     try:
-        # Enable detailed loading by default for better UX
-        vlans = direct_rest_manager.list_vlans(switch_ip, load_details=load_details)
+        vlans = switch_manager_factory.list_vlans(switch_info, load_details=load_details)
         return jsonify({'vlans': vlans})
     except Exception as e:
         logger.error(f"Error listing VLANs on {switch_ip}: {e}")
@@ -226,7 +325,7 @@ def get_vlans():
 
 @app.route('/api/vlans', methods=['POST'])
 def create_vlan():
-    """Create a VLAN on a specific switch with enhanced error handling."""
+    """Create a VLAN on a specific switch using appropriate manager."""
     data = request.json or {}
     switch_ip = data.get('switch_ip')
     vlan_id = data.get('vlan_id')
@@ -236,7 +335,8 @@ def create_vlan():
     if not all([switch_ip, vlan_id, name]):
         return jsonify({'error': 'switch_ip, vlan_id, and name are required'}), 400
     
-    if not inventory.get_switch(switch_ip):
+    switch_info = inventory.get_switch(switch_ip)
+    if not switch_info:
         return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
     
     try:
@@ -245,7 +345,7 @@ def create_vlan():
         return jsonify({'error': 'vlan_id must be a valid integer'}), 400
     
     try:
-        message = direct_rest_manager.create_vlan(switch_ip, vlan_id, name)
+        message = switch_manager_factory.create_vlan(switch_info, vlan_id, name)
         logger.info(f"VLAN creation request: {switch_ip} - VLAN {vlan_id} ({name})")
         return jsonify({
             'status': 'success',
@@ -275,7 +375,7 @@ def create_vlan():
 
 @app.route('/api/vlans/<int:vlan_id>', methods=['DELETE'])
 def delete_vlan():
-    """Delete a VLAN from a specific switch."""
+    """Delete a VLAN from a specific switch using appropriate manager."""
     data = request.json or {}
     switch_ip = data.get('switch_ip')
     vlan_id = int(request.view_args['vlan_id'])
@@ -283,11 +383,12 @@ def delete_vlan():
     if not switch_ip:
         return jsonify({'error': 'switch_ip is required in request body'}), 400
     
-    if not inventory.get_switch(switch_ip):
+    switch_info = inventory.get_switch(switch_ip)
+    if not switch_info:
         return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
     
     try:
-        message = switch_manager.delete_vlan(switch_ip, vlan_id)
+        message = switch_manager_factory.delete_vlan(switch_info, vlan_id)
         logger.info(f"VLAN deletion request: {switch_ip} - VLAN {vlan_id}")
         return jsonify({
             'status': 'success',
@@ -295,12 +396,6 @@ def delete_vlan():
         })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except SwitchConnectionError as e:
-        logger.error(f"Connection error for {switch_ip}: {e}")
-        return jsonify({'error': str(e)}), 503
-    except SwitchOperationError as e:
-        logger.error(f"Operation error for {switch_ip}: {e}")
-        return jsonify({'error': str(e)}), 403
     except Exception as e:
         logger.error(f"Unexpected error deleting VLAN on {switch_ip}: {e}")
         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
@@ -436,22 +531,125 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({'error': 'Internal server error'}), 500
 
-@app.errorhandler(Exception)
-def handle_exception(error):
-    """Handle unexpected exceptions."""
-    logger.error(f"Unhandled exception: {error}", exc_info=True)
-    return jsonify({'error': 'An unexpected error occurred'}), 500
+@app.route('/api/switches/<switch_ip>/cleanup-sessions', methods=['POST'])
+def cleanup_switch_sessions(switch_ip: str):
+    """Attempt to cleanup sessions on a specific switch."""
+    try:
+        logger.info(f"Attempting session cleanup for {switch_ip}")
+        success = direct_rest_manager.attempt_session_cleanup(switch_ip)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Session cleanup completed for {switch_ip}',
+                'suggestion': 'You can now try connecting again.'
+            })
+        else:
+            return jsonify({
+                'status': 'partial',
+                'message': f'Session cleanup attempted for {switch_ip}',
+                'suggestion': 'Please wait 5-10 minutes for sessions to timeout naturally, or try again.'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error during session cleanup for {switch_ip}: {e}")
+        return jsonify({
+            'error': f'Session cleanup failed: {str(e)}',
+            'error_type': 'cleanup_failed',
+            'suggestion': 'Please wait for natural session timeout or reboot the switch.'
+        }), 500
 
-if __name__ == '__main__':
-    logger.info("Starting Enhanced PyAOS-CX Automation Toolkit")
-    logger.info(f"Configuration: API Version {Config.API_VERSION}, SSL Verify: {Config.SSL_VERIFY}")
-    logger.info(f"Default switches: {Config.DEFAULT_SWITCHES}")
+# Debug endpoint to test route registration
+@app.route('/api/debug/test')
+def debug_test():
+    """Debug endpoint to test route registration."""
+    logger.info("Debug test route called")
+    return jsonify({'status': 'success', 'message': 'Route registration working'})
+
+# API Logging endpoints
+@app.route('/api/logs/calls')
+def get_api_call_logs():
+    """Get recent API call logs with optional filtering."""
+    logger.info("get_api_call_logs route called")
+    limit = request.args.get('limit', 50, type=int)
+    switch_ip = request.args.get('switch_ip')
+    category = request.args.get('category')
+    success_only = request.args.get('success_only')
     
-    app.run(
-        host='0.0.0.0',
-        port=5001,
-        debug=Config.FLASK_DEBUG
-    )
+    # Convert string 'true'/'false' to boolean
+    if success_only is not None:
+        success_only = success_only.lower() == 'true'
+    
+    try:
+        calls = api_logger.get_recent_calls(
+            limit=limit,
+            switch_ip=switch_ip,
+            category=category,
+            success_only=success_only
+        )
+        stats = api_logger.get_call_statistics()
+        
+        return jsonify({
+            'calls': calls,
+            'statistics': stats,
+            'total_returned': len(calls)
+        })
+    except Exception as e:
+        logger.error(f"Error retrieving API call logs: {e}")
+        return jsonify({'error': f'Error retrieving logs: {str(e)}'}), 500
+
+@app.route('/api/logs/clear', methods=['POST'])
+def clear_api_logs():
+    """Clear all API call logs."""
+    try:
+        cleared_count = api_logger.clear_history()
+        logger.info(f"API call logs cleared by user - {cleared_count} entries removed")
+        return jsonify({
+            'message': f'API call logs cleared successfully',
+            'cleared_entries': cleared_count
+        })
+    except Exception as e:
+        logger.error(f"Error clearing API logs: {e}")
+        return jsonify({'error': f'Error clearing logs: {str(e)}'}), 500
+
+@app.route('/api/logs/export')
+def export_api_logs():
+    """Export API logs in specified format."""
+    format_type = request.args.get('format', 'json').lower()
+    
+    try:
+        if format_type not in ['json', 'csv']:
+            return jsonify({'error': 'Supported formats: json, csv'}), 400
+            
+        exported_data = api_logger.export_logs(format_type)
+        
+        # Set appropriate content type and filename
+        if format_type == 'csv':
+            response = make_response(exported_data)
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = 'attachment; filename=api_logs.csv'
+        else:
+            response = make_response(exported_data)
+            response.headers['Content-Type'] = 'application/json'
+            response.headers['Content-Disposition'] = 'attachment; filename=api_logs.json'
+            
+        return response
+    except Exception as e:
+        logger.error(f"Error exporting API logs: {e}")
+        return jsonify({'error': f'Error exporting logs: {str(e)}'}), 500
+
+@app.route('/api/diagnostics/<switch_ip>')
+def run_switch_diagnostics(switch_ip: str):
+    """Run comprehensive diagnostics on a specific switch."""
+    try:
+        results = run_diagnostics(switch_ip, username="admin", password="Aruba123!")
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Error running diagnostics on {switch_ip}: {e}")
+        return jsonify({
+            'error': f'Error running diagnostics: {str(e)}',
+            'switch_ip': switch_ip
+        }), 500
 
 @app.route('/debug/test-auth/<switch_ip>', methods=['GET'])
 def test_authentication_debug(switch_ip: str):
@@ -478,3 +676,20 @@ def test_authentication_debug(switch_ip: str):
             'auth_success': False,
             'error': str(e)
         }), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle unexpected exceptions."""
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    return jsonify({'error': 'An unexpected error occurred'}), 500
+
+if __name__ == '__main__':
+    logger.info("Starting Enhanced PyAOS-CX Automation Toolkit")
+    logger.info(f"Configuration: API Version {Config.API_VERSION}, SSL Verify: {Config.SSL_VERIFY}")
+    logger.info(f"Default switches: {Config.DEFAULT_SWITCHES}")
+    
+    app.run(
+        host='0.0.0.0',
+        port=5001,
+        debug=Config.FLASK_DEBUG
+    )

@@ -33,9 +33,9 @@
     <div id="alert-container"></div>
 
     <!-- Main Content Area -->
-    <main class="flex-1 overflow-auto pb-20 bg-gray-50 min-h-screen">
+    <main class="flex-1 overflow-auto pb-20 bg-background min-h-screen">
         <!-- Dashboard Tab -->
-        <div id="dashboard-tab" class="tab-content p-4 space-y-6">
+        <div id="dashboard-tab" class="tab-content active p-4 space-y-6" style="display: block;">
             <!-- Quick Stats Grid -->
             <div class="grid grid-cols-2 gap-4">
                 <div class="card p-4 text-center">
@@ -120,36 +120,36 @@
                     <h3 class="card-title">Quick Actions</h3>
                 </div>
                 <div class="card-content grid grid-cols-2 gap-3">
-                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('switches')">
+                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('onboard')">
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                         </svg>
                         <span class="text-xs">Add Switch</span>
                     </button>
-                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('vlans')">
+                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('manage')">
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>
-                        <span class="text-xs">Manage VLANs</span>
+                        <span class="text-xs">Manage</span>
                     </button>
                     <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.refreshAllSwitches()">
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                         </svg>
                         <span class="text-xs">Refresh All</span>
                     </button>
-                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('operations')">
+                    <button class="btn-outline h-12 flex flex-col gap-1" onclick="dashboard.showTab('logs')">
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                         </svg>
-                        <span class="text-xs">Operations</span>
+                        <span class="text-xs">View Logs</span>
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- Switches Tab -->
-        <div id="switches-tab" class="tab-content p-4 space-y-6" style="display: none;">
+        <!-- Onboard Tab -->
+        <div id="onboard-tab" class="tab-content p-4 space-y-6" style="display: none;">
             <!-- Add Switch Card -->
             <div class="card">
                 <div class="card-header">
@@ -160,20 +160,102 @@
                 </div>
                 <div class="card-content">
                     <form id="add-switch-form" class="space-y-4">
+                        <!-- Connection Type Selection with Toggle -->
                         <div class="form-group">
-                            <label for="switch-ip" class="form-label">Switch IP Address</label>
-                            <input 
-                                type="text" 
-                                id="switch-ip" 
-                                name="switch_ip" 
-                                class="form-input" 
-                                placeholder="e.g., 10.202.0.208"
-                                pattern="^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-                                required
-                            >
+                            <label class="form-label">Connection Type</label>
+                            <div class="toggle-switch-container">
+                                <div class="toggle-option active" data-value="direct">
+                                    <div class="toggle-icon">
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                                        </svg>
+                                    </div>
+                                    <span>Direct Connection</span>
+                                </div>
+                                <div class="toggle-option" data-value="central">
+                                    <div class="toggle-icon">
+                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                        </svg>
+                                    </div>
+                                    <span>Central Managed</span>
+                                </div>
+                            </div>
+                            <input type="hidden" id="connection-type" name="connection_type" value="direct">
                         </div>
+
+                        <!-- Direct Connection Fields -->
+                        <div id="direct-connection-fields">
+                            <div class="form-group">
+                                <label for="switch-ip" class="form-label">Switch IP Address</label>
+                                <input 
+                                    type="text" 
+                                    id="switch-ip" 
+                                    name="switch_ip" 
+                                    class="form-input" 
+                                    placeholder="e.g., 10.202.0.208"
+                                    pattern="^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
+                                >
+                            </div>
+                        </div>
+
+                        <!-- Central Connection Fields -->
+                        <div id="central-connection-fields" style="display: none;">
+                            <div class="form-group">
+                                <label for="device-serial" class="form-label">Device Serial Number</label>
+                                <input 
+                                    type="text" 
+                                    id="device-serial" 
+                                    name="device_serial" 
+                                    class="form-input" 
+                                    placeholder="e.g., ABC1234567"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="client-id" class="form-label">Client ID</label>
+                                <input 
+                                    type="text" 
+                                    id="client-id" 
+                                    name="client_id" 
+                                    class="form-input" 
+                                    placeholder="Central OAuth2 Client ID"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="client-secret" class="form-label">Client Secret</label>
+                                <input 
+                                    type="password" 
+                                    id="client-secret" 
+                                    name="client_secret" 
+                                    class="form-input" 
+                                    placeholder="Central OAuth2 Client Secret"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="customer-id" class="form-label">Customer ID</label>
+                                <input 
+                                    type="text" 
+                                    id="customer-id" 
+                                    name="customer_id" 
+                                    class="form-input" 
+                                    placeholder="Central Customer ID"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label for="base-url" class="form-label">Base URL (Optional)</label>
+                                <input 
+                                    type="text" 
+                                    id="base-url" 
+                                    name="base_url" 
+                                    class="form-input" 
+                                    placeholder="https://apigw-prod2.central.arubanetworks.com"
+                                >
+                            </div>
+                        </div>
+
+                        <!-- Common Fields -->
                         <div class="form-group">
-                            <label for="switch-name" class="form-label">Switch Name (Optional)</label>
+                            <label for="switch-name" class="form-label">Switch/Device Name (Optional)</label>
                             <input 
                                 type="text" 
                                 id="switch-name" 
@@ -227,7 +309,28 @@
                 </div>
             </div>
 
-            <!-- Switch Inventory -->
+            <!-- Discovery Options -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Discovery</h2>
+                </div>
+                <div class="card-content space-y-3">
+                    <button class="btn-outline w-full h-12 flex items-center justify-center gap-2">
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                        Scan Network Range
+                    </button>
+                    <button class="btn-outline w-full h-12 flex items-center justify-center gap-2">
+                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        Import from Central
+                    </button>
+                </div>
+            </div>
+
+            <!-- Switch Inventory Cards -->
             <div class="card">
                 <div class="card-header">
                     <h2 class="card-title">Switch Inventory</h2>
@@ -243,22 +346,124 @@
             </div>
         </div>
 
-        <!-- VLANs Tab -->
-        <div id="vlans-tab" class="tab-content p-4 space-y-6" style="display: none;">
-            <!-- Switch Selector -->
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">Select Switch</h2>
+        <!-- Manage Tab -->
+        <div id="manage-tab" class="tab-content p-4 space-y-6" style="display: none;">
+            <!-- Sub-navigation -->
+            <div class="manage-subnav">
+                <button class="subnav-btn active" data-section="overview">Overview</button>
+                <button class="subnav-btn" data-section="vlans">VLANs</button>
+                <button class="subnav-btn" data-section="interfaces">Interfaces</button>
+            </div>
+
+            <!-- Overview Section -->
+            <div id="overview-section" class="manage-section active">
+                <!-- Switch Selector -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Select Switch</h2>
+                    </div>
+                    <div class="card-content">
+                        <div class="form-group">
+                            <select id="manage-switch-selector" class="form-input">
+                                <option value="">Loading switches...</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-content">
-                    <div class="form-group">
-                        <label for="switch-selector" class="form-label">Target Switch</label>
-                        <select id="switch-selector" class="form-input">
-                            <option value="">Loading switches...</option>
-                        </select>
+
+                <!-- Device Information -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Device Information</h2>
+                    </div>
+                    <div class="card-content space-y-3">
+                        <div class="info-row">
+                            <span class="info-label">Model/SKU</span>
+                            <span class="info-value" id="device-model">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Port Count</span>
+                            <span class="info-value" id="device-ports">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">PoE Status</span>
+                            <span class="info-value status-indicator" id="poe-status">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Power Supply</span>
+                            <span class="info-value status-indicator" id="power-status">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Fan Status</span>
+                            <span class="info-value status-indicator" id="fan-status">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">CPU Usage</span>
+                            <div class="cpu-meter">
+                                <div class="cpu-bar" id="cpu-bar"></div>
+                                <span class="cpu-text" id="cpu-text">0%</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
+
+            <!-- VLANs Section -->
+            <div id="vlans-section" class="manage-section">
+                <!-- VLAN List Header -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="flex items-center justify-between">
+                            <h2 class="card-title">VLANs</h2>
+                            <button id="add-vlan-btn" class="btn-primary btn-sm">
+                                <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Add VLAN
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-content">
+                        <div id="vlans-list" class="space-y-3">
+                            <div class="text-center py-4 text-muted-foreground">
+                                <p>Select a switch to view VLANs</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Interfaces Section -->
+            <div id="interfaces-section" class="manage-section">
+                <!-- Interfaces List -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title">Interfaces</h2>
+                    </div>
+                    <div class="card-content">
+                        <!-- Port Map Graphic -->
+                        <div class="port-map-container">
+                            <div class="port-map" id="port-map">
+                                <!-- Port map will be populated dynamically -->
+                                <div class="text-center py-4 text-muted-foreground">
+                                    <p>Select a switch to view port map</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Interfaces List -->
+                        <div id="interfaces-list" class="space-y-2 mt-4">
+                            <div class="text-center py-4 text-muted-foreground">
+                                <p>Select a switch to view interfaces</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Legacy VLANs Tab (kept for compatibility) -->
+        <div id="vlans-tab" class="tab-content p-4 space-y-6" style="display: none;">
 
             <!-- VLAN Operations -->
             <div class="card">
@@ -321,6 +526,83 @@
             </div>
         </div>
 
+        <!-- Logs Tab -->
+        <div id="logs-tab" class="tab-content p-4 space-y-6" style="display: none;">
+            <!-- Logs Header -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title flex items-center justify-between">
+                        API Call Logs
+                        <div class="flex gap-2">
+                            <button id="refresh-logs" class="btn-outline btn-sm">
+                                <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                                Refresh
+                            </button>
+                            <button id="clear-logs" class="btn-secondary btn-sm">
+                                <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                                Clear
+                            </button>
+                        </div>
+                    </h2>
+                </div>
+                <div class="card-content">
+                    <!-- Statistics -->
+                    <div id="logs-stats" class="grid grid-cols-3 gap-4 mb-4">
+                        <div class="text-center">
+                            <div class="text-lg font-semibold" id="total-calls">0</div>
+                            <div class="text-xs text-muted-foreground">Total Calls</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-lg font-semibold text-green-600" id="success-calls">0</div>
+                            <div class="text-xs text-muted-foreground">Success</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-lg font-semibold text-red-600" id="failed-calls">0</div>
+                            <div class="text-xs text-muted-foreground">Failed</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filters -->
+                    <div class="flex gap-2 mb-4 flex-wrap">
+                        <select id="log-filter-switch" class="form-input flex-1 min-w-32">
+                            <option value="">All Switches</option>
+                        </select>
+                        <select id="log-filter-category" class="form-input flex-1 min-w-32">
+                            <option value="">All Categories</option>
+                            <option value="authentication">Authentication</option>
+                            <option value="vlan_management">VLAN Management</option>
+                            <option value="system_info">System Info</option>
+                            <option value="configuration">Configuration</option>
+                        </select>
+                        <select id="log-filter-status" class="form-input flex-1 min-w-24">
+                            <option value="">All Status</option>
+                            <option value="true">Success Only</option>
+                            <option value="false">Failed Only</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Logs List -->
+            <div class="card">
+                <div class="card-content">
+                    <div id="logs-list" class="space-y-3">
+                        <div class="text-center py-8 text-muted-foreground">
+                            <svg class="h-12 w-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            <p class="font-medium">No API calls logged yet</p>
+                            <p class="text-sm">API calls will appear here as you interact with switches</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Operations Tab -->
         <div id="operations-tab" class="tab-content p-4 space-y-6" style="display: none;">
             <!-- Bulk Operations -->
@@ -376,27 +658,89 @@
                 </svg>
                 <span class="text-xs">Dashboard</span>
             </button>
-            <button class="nav-tab" data-tab="switches">
+            <button class="nav-tab" data-tab="onboard">
                 <svg class="h-5 w-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                 </svg>
-                <span class="text-xs">Switches</span>
+                <span class="text-xs">Onboard</span>
             </button>
-            <button class="nav-tab" data-tab="vlans">
+            <button class="nav-tab" data-tab="manage">
                 <svg class="h-5 w-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                 </svg>
-                <span class="text-xs">VLANs</span>
+                <span class="text-xs">Manage</span>
             </button>
-            <button class="nav-tab" data-tab="operations">
+            <button class="nav-tab" data-tab="logs">
                 <svg class="h-5 w-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
-                <span class="text-xs">Operations</span>
+                <span class="text-xs">Logs</span>
             </button>
         </div>
     </nav>
+
+    <!-- Floating Settings Button -->
+    <div class="floating-settings">
+        <button id="settings-btn" class="floating-btn">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Settings</h3>
+                <button class="modal-close" id="settings-close">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body space-y-4">
+                <!-- Bulk Operations -->
+                <div class="settings-section">
+                    <h4 class="settings-section-title">Bulk Operations</h4>
+                    <div class="space-y-2">
+                        <button class="btn-secondary w-full" onclick="dashboard.refreshAllSwitches()">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            Refresh All Switches
+                        </button>
+                        <button class="btn-secondary w-full" onclick="dashboard.exportConfiguration()">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            Export Configuration
+                        </button>
+                    </div>
+                </div>
+
+                <!-- System Information -->
+                <div class="settings-section">
+                    <h4 class="settings-section-title">System Information</h4>
+                    <div class="space-y-2">
+                        <div class="info-row">
+                            <span class="info-label">Version</span>
+                            <span class="info-value">Enhanced PyAOS-CX v2.0</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">API Version</span>
+                            <span class="info-value">v10.09</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">SSL Verification</span>
+                            <span class="info-value">Enabled</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="{{ url_for('static', filename='js/mobile_dashboard.js') }}"></script>
 </body>

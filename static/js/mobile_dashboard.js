@@ -16,6 +16,9 @@ class MobileDashboard {
     init() {
         this.setupMobileNavigation();
         this.setupEventListeners();
+        this.setupManageSubNavigation();
+        this.setupToggleSwitches();
+        this.setupSettingsModal();
         this.loadSwitches();
         this.startHealthMonitoring();
         this.setupPullToRefresh();
@@ -67,13 +70,18 @@ class MobileDashboard {
         this.activeTab = tabName;
 
         // Load data for specific tabs
-        if (tabName === 'switches') {
+        if (tabName === 'onboard') {
             this.loadSwitches();
+        } else if (tabName === 'manage') {
+            this.updateManageSwitchSelector();
         } else if (tabName === 'vlans') {
             this.updateSwitchSelector();
             if (this.currentSwitch) {
                 this.loadVlansForCurrentSwitch();
             }
+        } else if (tabName === 'logs') {
+            this.loadApiLogs();
+            this.updateLogsFilterSwitches();
         }
     }
 
@@ -83,6 +91,12 @@ class MobileDashboard {
         if (addSwitchForm) {
             addSwitchForm.addEventListener('submit', (e) => this.handleAddSwitch(e));
         }
+
+        // Connection type radio buttons
+        const connectionTypeRadios = document.querySelectorAll('input[name="connection_type"]');
+        connectionTypeRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => this.handleConnectionTypeChange(e));
+        });
 
         // Credential toggle
         const toggleCredentialsBtn = document.getElementById('toggle-credentials');
@@ -119,6 +133,28 @@ class MobileDashboard {
             if (e.target.classList.contains('remove-switch')) {
                 const switchIp = e.target.dataset.switchIp;
                 this.removeSwitch(switchIp);
+            }
+        });
+
+        // Logs tab event listeners
+        const refreshLogsBtn = document.getElementById('refresh-logs');
+        if (refreshLogsBtn) {
+            refreshLogsBtn.addEventListener('click', () => this.loadApiLogs());
+        }
+
+        const clearLogsBtn = document.getElementById('clear-logs');
+        if (clearLogsBtn) {
+            clearLogsBtn.addEventListener('click', () => this.clearApiLogs());
+        }
+
+        // Logs filter event listeners
+        const logFilterSwitch = document.getElementById('log-filter-switch');
+        const logFilterCategory = document.getElementById('log-filter-category');
+        const logFilterStatus = document.getElementById('log-filter-status');
+        
+        [logFilterSwitch, logFilterCategory, logFilterStatus].forEach(filter => {
+            if (filter) {
+                filter.addEventListener('change', () => this.loadApiLogs());
             }
         });
 
@@ -222,33 +258,82 @@ class MobileDashboard {
         }
     }
 
+    handleConnectionTypeChange(event) {
+        const connectionType = event.target.value;
+        const directFields = document.getElementById('direct-connection-fields');
+        const centralFields = document.getElementById('central-connection-fields');
+        const credentialsSection = document.querySelector('.form-group:has(#toggle-credentials)');
+        
+        if (connectionType === 'central') {
+            directFields.style.display = 'none';
+            centralFields.style.display = 'block';
+            if (credentialsSection) credentialsSection.style.display = 'none';
+        } else {
+            directFields.style.display = 'block';
+            centralFields.style.display = 'none';
+            if (credentialsSection) credentialsSection.style.display = 'block';
+        }
+    }
+
     async handleAddSwitch(event) {
         event.preventDefault();
         const formData = new FormData(event.target);
-        const switchIp = formData.get('switch_ip');
+        const connectionType = formData.get('connection_type') || 'direct';
         const switchName = formData.get('switch_name');
-        const username = formData.get('switch_username');
-        const password = formData.get('switch_password');
-
-        if (!this.isValidIP(switchIp)) {
-            this.showAlert('Please enter a valid IP address', 'error');
-            return;
-        }
 
         try {
             this.setButtonLoading('add-switch-btn', true);
             
-            const requestBody = { 
-                ip_address: switchIp, 
+            let requestBody = { 
+                connection_type: connectionType,
                 name: switchName 
             };
-            
-            // Only include credentials if provided
-            if (username && username.trim()) {
-                requestBody.username = username.trim();
-            }
-            if (password) {
-                requestBody.password = password;
+
+            if (connectionType === 'central') {
+                // Central connection fields
+                const deviceSerial = formData.get('device_serial');
+                const clientId = formData.get('client_id');
+                const clientSecret = formData.get('client_secret');
+                const customerId = formData.get('customer_id');
+                const baseUrl = formData.get('base_url');
+
+                // Validation for Central fields
+                if (!deviceSerial || !clientId || !clientSecret || !customerId) {
+                    this.showAlert('Please fill in all required Central connection fields', 'error');
+                    return;
+                }
+
+                requestBody = {
+                    ...requestBody,
+                    device_serial: deviceSerial,
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                    customer_id: customerId,
+                    base_url: baseUrl || 'https://apigw-prod2.central.arubanetworks.com'
+                };
+            } else {
+                // Direct connection fields
+                const switchIp = formData.get('switch_ip');
+                const username = formData.get('switch_username');
+                const password = formData.get('switch_password');
+
+                if (!this.isValidIP(switchIp)) {
+                    this.showAlert('Please enter a valid IP address', 'error');
+                    return;
+                }
+
+                requestBody = {
+                    ...requestBody,
+                    ip_address: switchIp
+                };
+                
+                // Only include credentials if provided
+                if (username && username.trim()) {
+                    requestBody.username = username.trim();
+                }
+                if (password) {
+                    requestBody.password = password;
+                }
             }
             
             const response = await fetch('/api/switches', {
@@ -260,12 +345,17 @@ class MobileDashboard {
             const data = await response.json();
             
             if (response.ok) {
-                this.switches.set(switchIp, data.switch);
+                const switchKey = data.switch.ip_address;
+                this.switches.set(switchKey, data.switch);
                 this.renderSwitches();
                 this.updateSwitchSelector();
                 this.updateDashboardStats();
                 this.showAlert(data.message, 'success');
                 event.target.reset();
+                
+                // Reset form state
+                this.handleConnectionTypeChange({ target: { value: 'direct' } });
+                document.querySelector('input[name="connection_type"][value="direct"]').checked = true;
                 
                 // Hide credentials section after successful add
                 const credentialsSection = document.getElementById('credentials-section');
@@ -276,7 +366,7 @@ class MobileDashboard {
                 }
                 
                 // Test connection immediately
-                this.refreshSwitch(switchIp);
+                this.refreshSwitch(switchKey);
                 
                 // Provide haptic feedback on mobile
                 if (navigator.haptic) {
@@ -293,17 +383,9 @@ class MobileDashboard {
                         credentialsSection.style.display = 'block';
                         toggleText.textContent = 'Hide Credentials';
                     }
-                } else if (data.error && (data.error.includes('authentication') || data.error.includes('credentials'))) {
-                    this.showAlert('Authentication failed. Please check credentials or try the credentials section below.', 'warning');
-                    // Auto-show credentials section
-                    const credentialsSection = document.getElementById('credentials-section');
-                    const toggleText = document.getElementById('cred-toggle-text');
-                    if (credentialsSection && toggleText) {
-                        credentialsSection.style.display = 'block';
-                        toggleText.textContent = 'Hide Credentials';
-                    }
                 } else {
-                    this.showAlert(data.error || 'Failed to add switch', 'error');
+                    // Use enhanced error handling for structured API responses
+                    this.handleApiError(response, data);
                 }
             }
         } catch (error) {
@@ -809,6 +891,215 @@ class MobileDashboard {
         }
     }
 
+    // Enhanced error handling for structured API responses
+    handleApiError(response, data) {
+        const errorType = data.error_type || 'unknown_error';
+        const switchIp = data.switch_ip;
+        
+        const errorMessages = {
+            'session_limit': {
+                title: 'Session Limit Reached',
+                message: 'Switch session limit reached. This typically resolves in 5-10 minutes.',
+                actions: ['cleanup', 'retry']
+            },
+            'invalid_credentials': {
+                title: 'Invalid Credentials',
+                message: 'Username or password is incorrect.',
+                actions: ['retry']
+            },
+            'connection_timeout': {
+                title: 'Connection Failed',
+                message: 'Cannot reach switch. Check IP address and network connectivity.',
+                actions: ['retry']
+            },
+            'permission_denied': {
+                title: 'Permission Denied',
+                message: 'User lacks required admin privileges.',
+                actions: ['retry']
+            },
+            'api_unavailable': {
+                title: 'API Unavailable',
+                message: 'Switch REST API is not properly configured.',
+                actions: []
+            },
+            'central_managed': {
+                title: 'Central Managed',
+                message: 'Switch is managed by Aruba Central.',
+                actions: []
+            }
+        };
+        
+        const errorConfig = errorMessages[errorType] || {
+            title: 'Unknown Error',
+            message: data.error || 'An unexpected error occurred.',
+            actions: ['retry']
+        };
+        
+        // Show specialized error dialog for certain error types
+        if (errorType === 'session_limit') {
+            this.showSessionLimitDialog(data);
+        } else {
+            this.showErrorDialog(errorConfig.title, errorConfig.message, data.suggestion, errorConfig.actions, switchIp);
+        }
+    }
+    
+    showSessionLimitDialog(errorData) {
+        const switchIp = errorData.switch_ip;
+        const modal = this.createModal('Session Limit Reached', `
+            <div class="error-dialog">
+                <div class="error-icon">⚠️</div>
+                <p><strong>Switch ${switchIp} has reached its session limit.</strong></p>
+                <p>${errorData.suggestion || 'This typically resolves automatically within 5-10 minutes.'}</p>
+                <div class="session-limit-actions">
+                    <button class="btn btn-primary" onclick="dashboard.attemptSessionCleanup('${switchIp}')">
+                        <span class="btn-icon">🧹</span> Clean Sessions
+                    </button>
+                    <button class="btn btn-secondary" onclick="dashboard.retryConnection('${switchIp}')">
+                        <span class="btn-icon">🔄</span> Retry
+                    </button>
+                    <button class="btn btn-secondary" onclick="dashboard.closeModal()">
+                        <span class="btn-icon">⏰</span> Wait
+                    </button>
+                </div>
+                <div class="countdown-timer" id="session-retry-timer" style="display: none;">
+                    <p>Retrying in: <span id="countdown-seconds">30</span> seconds</p>
+                </div>
+            </div>
+        `);
+        modal.show();
+    }
+    
+    showErrorDialog(title, message, suggestion, actions, switchIp) {
+        const actionButtons = actions.map(action => {
+            switch(action) {
+                case 'retry':
+                    return `<button class="btn btn-primary" onclick="dashboard.retryLastAction()">
+                        <span class="btn-icon">🔄</span> Retry
+                    </button>`;
+                case 'cleanup':
+                    return `<button class="btn btn-secondary" onclick="dashboard.attemptSessionCleanup('${switchIp}')">
+                        <span class="btn-icon">🧹</span> Clean Sessions
+                    </button>`;
+                default:
+                    return '';
+            }
+        }).join('');
+        
+        const modal = this.createModal(title, `
+            <div class="error-dialog">
+                <div class="error-icon">❌</div>
+                <p><strong>${message}</strong></p>
+                ${suggestion ? `<p class="suggestion">${suggestion}</p>` : ''}
+                <div class="error-actions">
+                    ${actionButtons}
+                    <button class="btn btn-secondary" onclick="dashboard.closeModal()">Close</button>
+                </div>
+            </div>
+        `);
+        modal.show();
+    }
+    
+    async attemptSessionCleanup(switchIp) {
+        try {
+            this.showLoadingSpinner('Cleaning up sessions...');
+            
+            const response = await fetch(`/api/switches/${switchIp}/cleanup-sessions`, {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.showAlert(data.message || 'Session cleanup completed', 'success');
+                this.closeModal();
+                
+                // Auto-retry after cleanup
+                setTimeout(() => {
+                    this.retryLastAction();
+                }, 2000);
+            } else {
+                this.showAlert(data.error || 'Session cleanup failed', 'error');
+            }
+        } catch (error) {
+            this.showAlert('Error during session cleanup: ' + error.message, 'error');
+        } finally {
+            this.hideLoadingSpinner();
+        }
+    }
+    
+    retryConnection(switchIp) {
+        this.closeModal();
+        // Trigger the add switch form submission again
+        const form = document.getElementById('add-switch-form');
+        if (form) {
+            form.dispatchEvent(new Event('submit'));
+        }
+    }
+    
+    retryLastAction() {
+        this.closeModal();
+        // This would retry the last failed action
+        // For now, just show a message to manually retry
+        this.showAlert('Please try your action again', 'info');
+    }
+    
+    createModal(title, content) {
+        // Remove existing modal if any
+        const existingModal = document.querySelector('.error-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        const modal = document.createElement('div');
+        modal.className = 'error-modal';
+        modal.innerHTML = `
+            <div class="modal-overlay" onclick="dashboard.closeModal()"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>${title}</h3>
+                    <button class="modal-close" onclick="dashboard.closeModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    ${content}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        return {
+            show: () => modal.style.display = 'flex',
+            hide: () => modal.style.display = 'none'
+        };
+    }
+    
+    closeModal() {
+        const modal = document.querySelector('.error-modal');
+        if (modal) {
+            modal.remove();
+        }
+    }
+    
+    showLoadingSpinner(message) {
+        const spinner = document.createElement('div');
+        spinner.id = 'loading-spinner';
+        spinner.innerHTML = `
+            <div class="spinner-overlay">
+                <div class="spinner">
+                    <div class="spinner-icon">⏳</div>
+                    <div class="spinner-message">${message}</div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(spinner);
+    }
+    
+    hideLoadingSpinner() {
+        const spinner = document.getElementById('loading-spinner');
+        if (spinner) {
+            spinner.remove();
+        }
+    }
+
     showAlert(message, type = 'info') {
         const alertContainer = document.getElementById('alert-container');
         if (!alertContainer) {
@@ -883,6 +1174,514 @@ class MobileDashboard {
             const num = parseInt(octet);
             return num >= 0 && num <= 255;
         });
+    }
+
+    // API Logs functionality
+    async loadApiLogs() {
+        try {
+            this.setButtonLoading('refresh-logs', true);
+            
+            // Get filter values
+            const switchIp = document.getElementById('log-filter-switch')?.value || '';
+            const category = document.getElementById('log-filter-category')?.value || '';
+            const successOnly = document.getElementById('log-filter-status')?.value || '';
+            
+            // Build query parameters
+            const params = new URLSearchParams();
+            params.append('limit', '50');
+            if (switchIp) params.append('switch_ip', switchIp);
+            if (category) params.append('category', category);
+            if (successOnly) params.append('success_only', successOnly);
+            
+            const response = await fetch(`/api/logs/calls?${params.toString()}`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.renderApiLogs(data.calls);
+                this.updateLogsStatistics(data.statistics);
+            } else {
+                this.showAlert('Error loading API logs: ' + (data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error loading API logs:', error);
+            this.showAlert('Error loading API logs: ' + error.message, 'error');
+        } finally {
+            this.setButtonLoading('refresh-logs', false);
+        }
+    }
+
+    renderApiLogs(calls) {
+        const container = document.getElementById('logs-list');
+        if (!container) return;
+        
+        if (!calls || calls.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-muted-foreground">
+                    <svg class="h-12 w-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <p class="font-medium">No API calls logged yet</p>
+                    <p class="text-sm">API calls will appear here as you interact with switches</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Sort calls by timestamp (most recent first)
+        const sortedCalls = [...calls].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        
+        const logsHtml = sortedCalls.map(call => `
+            <div class="log-entry ${call.success ? 'success' : 'error'}">
+                <div class="log-header">
+                    <span class="method ${call.method.toLowerCase()}">${call.method}</span>
+                    <span class="url" title="${call.url}">${this.shortenUrl(call.url)}</span>
+                    <span class="status-code status-${Math.floor(call.response_code/100)}">${call.response_code}</span>
+                    <span class="duration">${call.duration_ms.toFixed(0)}ms</span>
+                </div>
+                <div class="log-time">${this.formatTimestamp(call.timestamp)} - ${call.switch_ip || 'unknown'}</div>
+                <div class="log-details">
+                    <details>
+                        <summary>Request Details</summary>
+                        <pre>${this.formatRequestData(call)}</pre>
+                    </details>
+                    <details>
+                        <summary>Response Details</summary>
+                        <pre>${this.formatResponseData(call)}</pre>
+                    </details>
+                </div>
+            </div>
+        `).join('');
+        
+        container.innerHTML = logsHtml;
+    }
+
+    updateLogsStatistics(stats) {
+        const totalCalls = document.getElementById('total-calls');
+        const successCalls = document.getElementById('success-calls');
+        const failedCalls = document.getElementById('failed-calls');
+        
+        if (totalCalls) totalCalls.textContent = stats.total_calls || 0;
+        if (successCalls) successCalls.textContent = stats.successful_calls || 0;
+        if (failedCalls) failedCalls.textContent = stats.failed_calls || 0;
+    }
+
+    updateLogsFilterSwitches() {
+        const switchFilter = document.getElementById('log-filter-switch');
+        if (!switchFilter) return;
+        
+        // Get unique switches from current inventory
+        const switches = Array.from(this.switches.values());
+        const switchOptions = switches.map(sw => 
+            `<option value="${sw.ip_address}">${sw.name || sw.ip_address}</option>`
+        ).join('');
+        
+        switchFilter.innerHTML = `<option value="">All Switches</option>${switchOptions}`;
+    }
+
+    async clearApiLogs() {
+        try {
+            const confirmed = confirm('Are you sure you want to clear all API logs? This action cannot be undone.');
+            if (!confirmed) return;
+            
+            this.setButtonLoading('clear-logs', true);
+            
+            const response = await fetch('/api/logs/clear', { method: 'POST' });
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.showAlert(`Cleared ${data.cleared_entries} log entries`, 'success');
+                this.loadApiLogs(); // Refresh the display
+            } else {
+                this.showAlert('Error clearing logs: ' + (data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error clearing API logs:', error);
+            this.showAlert('Error clearing logs: ' + error.message, 'error');
+        } finally {
+            this.setButtonLoading('clear-logs', false);
+        }
+    }
+
+    // Helper methods for logs display
+    shortenUrl(url) {
+        try {
+            const urlObj = new URL(url);
+            const path = urlObj.pathname + urlObj.search;
+            return path.length > 50 ? path.substring(0, 47) + '...' : path;
+        } catch {
+            return url.length > 50 ? url.substring(0, 47) + '...' : url;
+        }
+    }
+
+    // New methods for Central-like experience
+    setupManageSubNavigation() {
+        const subnavBtns = document.querySelectorAll('.subnav-btn');
+        subnavBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const section = btn.dataset.section;
+                this.showManageSection(section);
+            });
+        });
+        
+        // Initialize with overview section
+        this.showManageSection('overview');
+    }
+    
+    showManageSection(sectionName) {
+        // Remove active class from all subnav buttons
+        const subnavBtns = document.querySelectorAll('.subnav-btn');
+        subnavBtns.forEach(btn => btn.classList.remove('active'));
+        
+        // Hide all manage sections
+        const sections = document.querySelectorAll('.manage-section');
+        sections.forEach(section => section.classList.remove('active'));
+        
+        // Show selected section and activate button
+        const selectedBtn = document.querySelector(`[data-section="${sectionName}"]`);
+        const selectedSection = document.getElementById(`${sectionName}-section`);
+        
+        if (selectedBtn) selectedBtn.classList.add('active');
+        if (selectedSection) selectedSection.classList.add('active');
+        
+        // Load data for specific sections
+        if (sectionName === 'overview') {
+            this.loadDeviceOverview();
+        } else if (sectionName === 'vlans') {
+            this.loadVlansForManage();
+        } else if (sectionName === 'interfaces') {
+            this.loadInterfacesForManage();
+        }
+    }
+    
+    setupToggleSwitches() {
+        const toggleOptions = document.querySelectorAll('.toggle-option');
+        toggleOptions.forEach(option => {
+            option.addEventListener('click', (e) => {
+                e.preventDefault();
+                
+                // Remove active class from siblings
+                const container = option.parentElement;
+                container.querySelectorAll('.toggle-option').forEach(opt => 
+                    opt.classList.remove('active')
+                );
+                
+                // Add active class to clicked option
+                option.classList.add('active');
+                
+                // Update hidden input
+                const value = option.dataset.value;
+                const hiddenInput = document.getElementById('connection-type');
+                if (hiddenInput) {
+                    hiddenInput.value = value;
+                }
+                
+                // Handle connection type change
+                this.handleConnectionTypeToggle(value);
+            });
+        });
+    }
+    
+    handleConnectionTypeToggle(type) {
+        const directFields = document.getElementById('direct-connection-fields');
+        const centralFields = document.getElementById('central-connection-fields');
+        
+        if (type === 'central') {
+            if (directFields) directFields.style.display = 'none';
+            if (centralFields) centralFields.style.display = 'block';
+        } else {
+            if (directFields) directFields.style.display = 'block';
+            if (centralFields) centralFields.style.display = 'none';
+        }
+    }
+    
+    setupSettingsModal() {
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsModal = document.getElementById('settings-modal');
+        const settingsClose = document.getElementById('settings-close');
+        
+        if (settingsBtn && settingsModal) {
+            settingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                settingsModal.classList.add('active');
+            });
+        }
+        
+        if (settingsClose && settingsModal) {
+            settingsClose.addEventListener('click', (e) => {
+                e.preventDefault();
+                settingsModal.classList.remove('active');
+            });
+        }
+        
+        // Close modal on backdrop click
+        if (settingsModal) {
+            settingsModal.addEventListener('click', (e) => {
+                if (e.target === settingsModal) {
+                    settingsModal.classList.remove('active');
+                }
+            });
+        }
+    }
+    
+    loadDeviceOverview() {
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        if (!selectedSwitch) {
+            this.updateDeviceInfo({});
+            return;
+        }
+        
+        // Mock device information for now
+        const mockDeviceInfo = {
+            model: 'Aruba CX 6200-24G-4SFP+',
+            portCount: '24',
+            poeStatus: 'online',
+            powerStatus: 'online', 
+            fanStatus: 'online',
+            cpuUsage: Math.floor(Math.random() * 40) + 5 // Random CPU 5-45%
+        };
+        
+        this.updateDeviceInfo(mockDeviceInfo);
+    }
+    
+    updateDeviceInfo(info) {
+        const elements = {
+            'device-model': info.model || '--',
+            'device-ports': info.portCount || '--',
+            'poe-status': info.poeStatus || '--',
+            'power-status': info.powerStatus || '--',
+            'fan-status': info.fanStatus || '--',
+            'cpu-text': info.cpuUsage ? `${info.cpuUsage}%` : '0%'
+        };
+        
+        Object.entries(elements).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = value;
+                
+                // Add status classes
+                if (id.includes('status')) {
+                    element.className = 'info-value status-indicator';
+                    if (value === 'online') {
+                        element.classList.add('online');
+                    } else if (value === 'offline') {
+                        element.classList.add('offline');
+                    } else if (value === 'warning') {
+                        element.classList.add('warning');
+                    }
+                }
+            }
+        });
+        
+        // Update CPU bar
+        const cpuBar = document.getElementById('cpu-bar');
+        if (cpuBar && info.cpuUsage) {
+            cpuBar.style.setProperty('--cpu-width', `${info.cpuUsage}%`);
+            cpuBar.style.background = `linear-gradient(90deg, transparent ${info.cpuUsage}%, var(--muted) ${info.cpuUsage}%)`;
+        }
+    }
+    
+    loadVlansForManage() {
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        if (!selectedSwitch) {
+            this.updateVlansList([]);
+            return;
+        }
+        
+        // Use existing VLAN loading logic but display in manage tab format
+        this.loadVlansForSwitch(selectedSwitch, (vlans) => {
+            this.updateVlansList(vlans);
+        });
+    }
+    
+    updateVlansList(vlans) {
+        const vlansList = document.getElementById('vlans-list');
+        if (!vlansList) return;
+        
+        if (!vlans || vlans.length === 0) {
+            vlansList.innerHTML = `
+                <div class="text-center py-4 text-muted-foreground">
+                    <p>No VLANs found</p>
+                </div>
+            `;
+            return;
+        }
+        
+        vlansList.innerHTML = vlans.map(vlan => `
+            <div class="vlan-item">
+                <div class="vlan-info">
+                    <div class="vlan-id">VLAN ${vlan.id}</div>
+                    <div class="vlan-name">${vlan.name || 'Unnamed'}</div>
+                </div>
+                <div class="interface-actions">
+                    <button class="edit-btn" onclick="dashboard.editVlan(${vlan.id})" title="Edit VLAN">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    loadInterfacesForManage() {
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        if (!selectedSwitch) {
+            this.updateInterfacesList([]);
+            this.updatePortMap([]);
+            return;
+        }
+        
+        // Mock interfaces data for now
+        const mockInterfaces = [];
+        for (let i = 1; i <= 24; i++) {
+            mockInterfaces.push({
+                name: `1/1/${i}`,
+                status: Math.random() > 0.3 ? 'up' : 'down',
+                description: `Port ${i}`
+            });
+        }
+        
+        this.updateInterfacesList(mockInterfaces);
+        this.updatePortMap(mockInterfaces);
+    }
+    
+    updateInterfacesList(interfaces) {
+        const interfacesList = document.getElementById('interfaces-list');
+        if (!interfacesList) return;
+        
+        if (!interfaces || interfaces.length === 0) {
+            interfacesList.innerHTML = `
+                <div class="text-center py-4 text-muted-foreground">
+                    <p>No interfaces found</p>
+                </div>
+            `;
+            return;
+        }
+        
+        interfacesList.innerHTML = interfaces.map(iface => `
+            <div class="interface-item">
+                <div class="interface-info">
+                    <div class="interface-name">${iface.name}</div>
+                    <div class="interface-status ${iface.status}">
+                        <span class="status-indicator ${iface.status}">
+                            ${iface.status.toUpperCase()}
+                        </span>
+                        <span>${iface.description || 'No description'}</span>
+                    </div>
+                </div>
+                <div class="interface-actions">
+                    <button class="edit-btn" onclick="dashboard.editInterface('${iface.name}')" title="Edit Interface">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    updatePortMap(interfaces) {
+        const portMap = document.getElementById('port-map');
+        if (!portMap || !interfaces || interfaces.length === 0) {
+            if (portMap) {
+                portMap.innerHTML = `
+                    <div class="text-center py-4 text-muted-foreground">
+                        <p>Select a switch to view port map</p>
+                    </div>
+                `;
+            }
+            return;
+        }
+        
+        const portCount = interfaces.length;
+        const gridClass = portCount <= 24 ? 'port-grid-24' : 'port-grid-48';
+        
+        portMap.className = `port-map ${gridClass}`;
+        portMap.innerHTML = interfaces.map((iface, index) => {
+            const portNum = index + 1;
+            return `
+                <div class="port-indicator ${iface.status}" 
+                     title="${iface.name} - ${iface.status.toUpperCase()}"
+                     onclick="dashboard.editInterface('${iface.name}')">
+                    ${portNum}
+                </div>
+            `;
+        }).join('');
+    }
+    
+    updateManageSwitchSelector() {
+        const selector = document.getElementById('manage-switch-selector');
+        if (!selector) return;
+        
+        // Clear existing options
+        selector.innerHTML = '<option value="">Select a switch...</option>';
+        
+        // Add switches to selector
+        this.switches.forEach((switchInfo, ip) => {
+            const option = document.createElement('option');
+            option.value = ip;
+            option.textContent = switchInfo.name ? `${switchInfo.name} (${ip})` : ip;
+            selector.appendChild(option);
+        });
+        
+        // Add event listener for switch change
+        selector.removeEventListener('change', this.handleManageSwitchChange);
+        selector.addEventListener('change', this.handleManageSwitchChange.bind(this));
+    }
+    
+    handleManageSwitchChange(event) {
+        const selectedSwitch = event.target.value;
+        this.currentSwitch = selectedSwitch;
+        
+        // Refresh the current manage section
+        const activeSection = document.querySelector('.subnav-btn.active');
+        if (activeSection) {
+            const sectionName = activeSection.dataset.section;
+            this.showManageSection(sectionName);
+        }
+    }
+    
+    // Stub methods for edit buttons
+    editVlan(vlanId) {
+        this.showAlert(`Edit VLAN ${vlanId} - Coming soon!`, 'info');
+    }
+    
+    editInterface(interfaceName) {
+        this.showAlert(`Edit Interface ${interfaceName} - Coming soon!`, 'info');
+    }
+    
+    formatTimestamp(timestamp) {
+        try {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+            });
+        } catch {
+            return timestamp;
+        }
+    }
+
+    formatRequestData(call) {
+        const data = {
+            method: call.method,
+            url: call.url,
+            headers: call.headers,
+            data: call.request_data
+        };
+        return JSON.stringify(data, null, 2);
+    }
+
+    formatResponseData(call) {
+        const data = {
+            status: call.response_code,
+            size: `${call.response_size || 0} bytes`,
+            duration: `${call.duration_ms}ms`,
+            response: call.response_text
+        };
+        return JSON.stringify(data, null, 2);
     }
 }
 

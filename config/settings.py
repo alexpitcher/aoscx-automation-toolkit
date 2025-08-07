@@ -13,7 +13,7 @@ class Config:
     
     # Switch credentials
     SWITCH_USER = os.getenv('SWITCH_USER', 'admin')
-    SWITCH_PASSWORD = os.getenv('SWITCH_PASSWORD', '')
+    SWITCH_PASSWORD = os.getenv('SWITCH_PASSWORD', 'Aruba123!')
     
     # API settings
     API_VERSION = os.getenv('API_VERSION', '10.15')

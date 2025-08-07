@@ -1,0 +1,494 @@
+{
+  "switch_ip": "10.201.1.203",
+  "timestamp": "2025-08-07T11:17:56.132216",
+  "api_versions": {
+    "base_rest": {
+      "status_code": 200,
+      "response": "{\"latest\":{\"version\":\"v10.14\",\"prefix\":\"/rest/v10.14\",\"doc\":\"/api/v10.14\"},\"v10.04\":{\"version\":\"v10.04\",\"prefix\":\"/rest/v10.04\",\"doc\":\"/api/v10.04\"},\"v10.08\":{\"version\":\"v10.08\",\"prefix\":\"/rest/v10.08\",\"doc\":\"/api/v10.08\"},\"v10.09\":{\"version\":\"v10.09\",\"prefix\":\"/rest/v10.09\",\"doc\":\"/api/v10.09\"},\"v10.10\":{\"version\":\"v10.10\",\"prefix\":\"/rest/v10.10\",\"doc\":\"/api/v10.10\"},\"v10.11\":{\"version\":\"v10.11\",\"prefix\":\"/rest/v10.11\",\"doc\":\"/api/v10.11\"},\"v10.12\":{\"version\":\"v10.12\",\"prefix\":\"/rest/v10.12\",\"d"
+    },
+    "v1": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.04": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.08": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.09": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.10": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.11": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.12": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.13": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.14": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    },
+    "v10.15": {
+      "status_code": 401,
+      "available": true,
+      "response_headers": {
+        "Server": "nginx",
+        "Date": "Thu, 07 Aug 2025 10:17:56 GMT",
+        "Content-Type": "text/plain",
+        "Content-Length": "12",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache, no-store",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-XSS-Protection": "1; mode=block",
+        "Strict-Transport-Security": "max-age=31536000; includeSubdomains;",
+        "Content-Security-Policy": "script-src 'self' 'sha256-Vr7caLfhPjPEeQNH5n7dEGm7EYCQWxH16Tc4u9c+mM8=' 'sha256-pZnUCLouq90XQpzO5bFR4C0G0pJRvY5xPmrg/dmgEHM=' 'sha256-O4CRj7+Nmv2ySF/Vs4cIcPFqpN5Igd5Ykpqk3eliQqU=' 'sha256-vXYk13Wej/l4lSpIdMJf01ZeeKWzQgUnbcn6zZYCByg='; font-src 'self' https://fonts.gstatic.com; style-src 'self' https://fonts.googleapis.com https://cdn.jsdelivr.net; img-src 'self' data:;  connect-src 'self' https://ase.arubanetworks.com https://www.arubanetworks.com; object-src 'none'; media-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'self'; default-src 'self'"
+      },
+      "response_snippet": "Unauthorized"
+    }
+  },
+  "authentication": {
+    "v1": {
+      "form_encoded_post": {
+        "login_status_code": 410,
+        "login_response": "<html>\r\n<head><title>410 Gone</title></head>\r\n<body>\r\n<center><h1>410 Gone</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 410,
+        "login_response": "<html>\r\n<head><title>410 Gone</title></head>\r\n<body>\r\n<center><h1>410 Gone</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 410,
+        "login_response": "<html>\r\n<head><title>410 Gone</title></head>\r\n<body>\r\n<center><h1>410 Gone</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 410,
+        "response": "<html>\r\n<head><title>410 Gone</title></head>\r\n<body>\r\n<center><h1>410 Gone</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        "working": false
+      }
+    },
+    "v10.04": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.08": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.09": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.10": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.11": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.12": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.13": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.14": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    },
+    "v10.15": {
+      "form_encoded_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "query_parameter_post": {
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "json_post_with_csrf": {
+        "csrf_token": null,
+        "login_status_code": 404,
+        "login_response": "404 page not found\n",
+        "test_access_code": null,
+        "working": null,
+        "session_id": null
+      },
+      "basic_auth_header": {
+        "status_code": 401,
+        "response": "Unauthorized",
+        "working": false
+      }
+    }
+  },
+  "vlan_operations": {},
+  "https_config": {},
+  "session_info": {
+    "active_sessions": 0,
+    "session_types": []
+  },
+  "recommendations": {
+    "recommended_api_version": null,
+    "recommended_auth_method": null,
+    "recommended_vlan_method": null,
+    "working_combinations": []
+  }
+}

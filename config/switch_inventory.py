@@ -19,6 +19,15 @@ class SwitchInfo:
     model: Optional[str] = None
     error_message: Optional[str] = None
     
+    # Connection type and Central configuration
+    connection_type: str = "direct"  # "direct" or "central"
+    device_serial: Optional[str] = None  # For Central-managed devices
+    client_id: Optional[str] = None      # Central OAuth2 credentials
+    client_secret: Optional[str] = None
+    customer_id: Optional[str] = None
+    base_url: Optional[str] = None       # Central API base URL
+    site: Optional[str] = None           # Central site information
+    
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -28,7 +37,10 @@ class SwitchInfo:
             'last_seen': self.last_seen.isoformat() if self.last_seen else None,
             'firmware_version': self.firmware_version,
             'model': self.model,
-            'error_message': self.error_message
+            'error_message': self.error_message,
+            'connection_type': self.connection_type,
+            'device_serial': self.device_serial,
+            'site': self.site
         }
 
 class SwitchInventory:
@@ -38,16 +50,41 @@ class SwitchInventory:
         self._switches: Dict[str, SwitchInfo] = {}
         self._credentials: Dict[str, Dict[str, str]] = {}  # Store credentials per switch
         
-    def add_switch(self, ip_address: str, name: Optional[str] = None) -> bool:
+    def add_switch(self, ip_address: str, name: Optional[str] = None, 
+                   connection_type: str = "direct", **kwargs) -> bool:
         """Add a switch to the inventory."""
-        if self.is_valid_ip(ip_address):
-            self._switches[ip_address] = SwitchInfo(
-                ip_address=ip_address,
-                name=name
-            )
-            logger.info(f"Added switch {ip_address} to inventory")
-            return True
-        return False
+        if connection_type == "direct":
+            if not self.is_valid_ip(ip_address):
+                return False
+        
+        self._switches[ip_address] = SwitchInfo(
+            ip_address=ip_address,
+            name=name,
+            connection_type=connection_type,
+            **kwargs
+        )
+        logger.info(f"Added {connection_type} switch {ip_address} to inventory")
+        return True
+    
+    def add_central_switch(self, device_serial: str, name: Optional[str] = None,
+                          client_id: str = None, client_secret: str = None,
+                          customer_id: str = None, base_url: str = None) -> bool:
+        """Add a Central-managed switch to the inventory."""
+        # Use device serial as the key for Central devices
+        switch_key = f"central:{device_serial}"
+        
+        self._switches[switch_key] = SwitchInfo(
+            ip_address=switch_key,  # Use as identifier
+            name=name or device_serial,
+            connection_type="central",
+            device_serial=device_serial,
+            client_id=client_id,
+            client_secret=client_secret,
+            customer_id=customer_id,
+            base_url=base_url or "https://apigw-prod2.central.arubanetworks.com"
+        )
+        logger.info(f"Added Central-managed switch {device_serial} to inventory")
+        return True
     
     def remove_switch(self, ip_address: str) -> bool:
         """Remove a switch from the inventory."""

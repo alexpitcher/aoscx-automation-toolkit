@@ -1,19 +1,32 @@
 """
-Direct REST API implementation with VLAN name support and Central management detection.
+Direct REST API implementation with VLAN name support and Central management detection (DEBUG VERSION).
 """
 import requests
 import json
 import logging
 import time
+import http.client as http_client
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import urllib3
 
 from config.settings import Config
 from config.switch_inventory import inventory
+from core.exceptions import (
+    SessionLimitError, InvalidCredentialsError, ConnectionTimeoutError,
+    PermissionDeniedError, APIUnavailableError, CentralManagedError,
+    VLANOperationError, UnknownSwitchError
+)
+from core.api_logger import api_logger
 
 # Suppress InsecureRequestWarning for development
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Disable HTTP wire-level debugging for cleaner output
+http_client.HTTPConnection.debuglevel = 0
+logging.basicConfig(level=logging.INFO)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('requests.packages.urllib3').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -22,662 +35,452 @@ class DirectRestManager:
     
     def __init__(self):
         self.config = Config()
-        self.sessions = {}  # Cache authentication cookies
-        self.switch_api_versions = {}  # Track which API version works per switch
-        self.session_timeouts = {}  # Track when sessions should expire
+        self.sessions: Dict[str, requests.Session] = {}
+        self.switch_api_versions: Dict[str, str] = {}
+        self.session_timeouts: Dict[str, float] = {}
+    
+    def _log_api_call(self, method: str, url: str, headers: Dict, data: Any, 
+                     response: requests.Response, start_time: float, switch_ip: str = None):
+        """Helper method to log API calls with comprehensive details."""
+        duration_ms = (time.time() - start_time) * 1000
         
+        # Extract switch IP from URL if not provided
+        if not switch_ip:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                switch_ip = parsed.hostname
+            except Exception:
+                switch_ip = 'unknown'
+        
+        api_logger.log_api_call(
+            method=method,
+            url=url,
+            headers=headers,
+            request_data=data,
+            response_code=response.status_code,
+            response_text=response.text,
+            duration_ms=duration_ms,
+            switch_ip=switch_ip
+        )
+
     def cleanup_session(self, switch_ip: str, force_logout: bool = True):
-        """Explicitly cleanup session for a switch."""
         if switch_ip in self.sessions:
             try:
                 if force_logout:
-                    session = self.sessions[switch_ip]
-                    base_url = self._get_base_url(switch_ip)
-                    # Attempt explicit logout
-                    logout_response = session.post(f"{base_url}/logout", timeout=5)
-                    logger.debug(f"Logout response for {switch_ip}: {logout_response.status_code}")
+                    sess = self.sessions[switch_ip]
+                    base = self._get_base_url(switch_ip)
+                    resp = sess.post(f"{base}/logout", timeout=5)
+                    logger.debug(f"LOGOUT {base}/logout: {resp.status_code}")
             except Exception as e:
-                logger.debug(f"Error during logout for {switch_ip}: {e}")
+                logger.debug(f"Logout error for {switch_ip}: {e}")
             finally:
-                # Always remove from cache
                 self.sessions.pop(switch_ip, None)
                 self.session_timeouts.pop(switch_ip, None)
-                logger.info(f"Cleaned up session for {switch_ip}")
+                logger.info(f"Cleaned session for {switch_ip}")
 
     def cleanup_all_sessions(self):
-        """Clean up all cached sessions."""
-        switch_ips = list(self.sessions.keys())
-        for switch_ip in switch_ips:
-            self.cleanup_session(switch_ip, force_logout=True)
-        logger.info("Cleaned up all sessions")
-    
-    def test_connection_with_credentials(self, switch_ip: str, username: str, password: str) -> Dict[str, Any]:
-        """Test connection to switch with specific credentials."""
+        for ip in list(self.sessions.keys()):
+            self.cleanup_session(ip, force_logout=True)
+        logger.info("All sessions cleaned up")
+
+    def attempt_session_cleanup(self, switch_ip: str) -> bool:
+        """
+        Attempt to clean up sessions when session limit is reached.
+        Returns True if cleanup appears successful, False otherwise.
+        """
         try:
-            # Create a temporary session for testing
-            test_session = requests.Session()
-            test_session.verify = Config.SSL_VERIFY
+            logger.info(f"Attempting session cleanup for {switch_ip}")
             
-            # Attempt authentication
-            auth_url = f"https://{switch_ip}/rest/{Config.API_VERSION}/login"
-            auth_data = {
-                'username': username,
-                'password': password or ''
-            }
+            # Method 1: Try to logout any known sessions
+            if switch_ip in self.sessions:
+                self.cleanup_session(switch_ip, force_logout=True)
             
-            logger.debug(f"Testing authentication to {switch_ip} with username: {username}")
+            # Method 2: Try multiple session cleanup attempts
+            # Sometimes switches need multiple attempts to clear stale sessions
+            cleanup_attempts = [
+                ("admin", "admin"),
+                ("admin", ""),
+                ("admin", None),
+                (self.config.SWITCH_USER, self.config.SWITCH_PASSWORD)
+            ]
             
-            auth_response = test_session.post(
-                auth_url,
-                json=auth_data,
-                timeout=10,
-                verify=Config.SSL_VERIFY
-            )
-            
-            if auth_response.status_code == 200:
-                # Test system access
-                system_url = f"https://{switch_ip}/rest/{Config.API_VERSION}/system"
-                system_response = test_session.get(
-                    system_url,
-                    timeout=10,
-                    verify=Config.SSL_VERIFY
-                )
-                
-                if system_response.status_code == 200:
-                    system_info = system_response.json()
+            for username, password in cleanup_attempts:
+                try:
+                    # Create temporary session to attempt logout
+                    temp_session = requests.Session()
+                    temp_session.verify = self.config.SSL_VERIFY
                     
-                    # Cleanup test session
-                    try:
-                        test_session.post(f"https://{switch_ip}/rest/{Config.API_VERSION}/logout", timeout=5)
-                    except:
-                        pass
+                    # Try to login and immediately logout to clear a session slot
+                    auth_url = f"https://{switch_ip}/rest/v10.09/login?username={username}&password={password or ''}"
+                    response = temp_session.post(auth_url, headers={'accept': '*/*'}, data="", timeout=5)
+                    
+                    if response.status_code == 200:
+                        # Successful login, now logout
+                        logout_url = f"https://{switch_ip}/rest/v10.09/logout"
+                        temp_session.post(logout_url, timeout=5)
+                        logger.info(f"Cleared session for {username} on {switch_ip}")
+                        return True
+                    
+                except Exception as e:
+                    logger.debug(f"Cleanup attempt failed for {username}: {e}")
+                    continue
+            
+            logger.warning(f"Session cleanup unsuccessful for {switch_ip}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error during session cleanup for {switch_ip}: {e}")
+            return False
+
+    def parse_auth_error(self, switch_ip: str, username: str, response: requests.Response) -> Exception:
+        """
+        Parse authentication error response and return appropriate exception.
+        """
+        status_code = response.status_code
+        response_text = response.text.lower()
+        
+        # Session limit errors
+        if "session limit" in response_text or "too many sessions" in response_text:
+            return SessionLimitError(switch_ip, response.text.strip())
+        
+        # Invalid credentials
+        if status_code == 401:
+            if "login failed" in response_text or "unauthorized" in response_text:
+                return InvalidCredentialsError(switch_ip, username, response.text.strip())
+        
+        # Permission denied
+        if status_code == 403:
+            return PermissionDeniedError(switch_ip, username)
+        
+        # API not found
+        if status_code == 404:
+            return APIUnavailableError(switch_ip, f"API endpoint not found: {response.text.strip()}")
+        
+        # API deprecated/removed
+        if status_code == 410:
+            if "central" in response_text or "blocked" in response_text:
+                return CentralManagedError(switch_ip)
+            return APIUnavailableError(switch_ip, f"API deprecated: {response.text.strip()}")
+        
+        # Default unknown error
+        return UnknownSwitchError(switch_ip, status_code, response.text.strip())
+
+    def test_connection_with_credentials(self, switch_ip: str, username: str, password: str) -> Dict[str, Any]:
+        """Test connection using confirmed working method with proper error handling."""
+        try:
+            sess = requests.Session()
+            sess.verify = Config.SSL_VERIFY
+            
+            # Use confirmed working method: query parameter POST to v10.09
+            auth_url = f"https://{switch_ip}/rest/v10.09/login?username={username}&password={password}"
+            logger.info(f"Testing credentials for {username}@{switch_ip}")
+            
+            # Log authentication attempt
+            start_time = time.time()
+            headers = {'accept': '*/*'}
+            request_data = f"username={username}&password=***"
+            
+            resp = sess.post(auth_url, headers=headers, data="", timeout=10, verify=sess.verify)
+            self._log_api_call('POST', auth_url, headers, request_data, resp, start_time, switch_ip)
+            logger.info(f"LOGIN status: {resp.status_code}")
+            
+            if resp.status_code == 200 and sess.cookies.get_dict():
+                # Test system access
+                sys_url = f"https://{switch_ip}/rest/v10.09/system"
+                start_time = time.time()
+                s2 = sess.get(sys_url, timeout=10, verify=sess.verify)
+                self._log_api_call('GET', sys_url, {}, None, s2, start_time, switch_ip)
+                logger.info(f"SYSTEM access status: {s2.status_code}")
+                
+                if s2.status_code == 200:
+                    info = s2.json()
+                    # Store successful session for reuse
+                    self.sessions[switch_ip] = sess
+                    self.session_timeouts[switch_ip] = time.time() + 900
                     
                     return {
                         'status': 'online',
                         'ip_address': switch_ip,
-                        'firmware_version': system_info.get('firmware_version', 'Unknown'),
-                        'model': system_info.get('platform_name', 'Unknown'),
+                        'firmware_version': info.get('software_version', 'Unknown'),
+                        'model': info.get('platform_name', 'Unknown'),
+                        'api_version': 'v10.09',
                         'last_seen': datetime.now().isoformat()
                     }
                 else:
-                    logger.warning(f"Authentication succeeded but system access failed for {switch_ip}: {system_response.status_code}")
-                    return {
-                        'status': 'error',
-                        'ip_address': switch_ip,
-                        'error_message': f'System access failed (HTTP {system_response.status_code})'
-                    }
-            elif auth_response.status_code == 401:
-                return {
-                    'status': 'error',
-                    'ip_address': switch_ip,
-                    'error_message': 'Authentication failed - invalid credentials'
-                }
+                    # Authentication worked but system access failed
+                    raise PermissionDeniedError(switch_ip, username, "system information access")
             else:
-                return {
-                    'status': 'error',
-                    'ip_address': switch_ip,
-                    'error_message': f'Authentication request failed (HTTP {auth_response.status_code})'
-                }
+                # Parse the specific authentication error
+                auth_error = self.parse_auth_error(switch_ip, username, resp)
+                raise auth_error
                 
         except requests.exceptions.ConnectTimeout:
-            return {
-                'status': 'offline',
-                'ip_address': switch_ip,
-                'error_message': 'Connection timeout'
-            }
+            raise ConnectionTimeoutError(switch_ip, "Connection timeout")
         except requests.exceptions.ConnectionError:
-            return {
-                'status': 'offline',
-                'ip_address': switch_ip,
-                'error_message': 'Connection refused'
-            }
+            raise ConnectionTimeoutError(switch_ip, "Network connection failed")
+        except (SessionLimitError, InvalidCredentialsError, PermissionDeniedError, 
+                APIUnavailableError, CentralManagedError, UnknownSwitchError):
+            # Re-raise our custom exceptions
+            raise
         except Exception as e:
-            logger.error(f"Error testing credentials for {switch_ip}: {e}")
-            return {
-                'status': 'error',
-                'ip_address': switch_ip,
-                'error_message': str(e)
-            }
+            logger.error(f"Unexpected error testing connection to {switch_ip}: {e}")
+            raise UnknownSwitchError(switch_ip, response_text=str(e))
 
     def _is_session_valid(self, switch_ip: str, session: requests.Session) -> bool:
-        """Check if session is still valid."""
-        try:
-            # Check if session has expired based on our timeout
-            if switch_ip in self.session_timeouts:
-                if time.time() > self.session_timeouts[switch_ip]:
-                    logger.debug(f"Session for {switch_ip} has expired")
-                    return False
-            
-            # Quick validation request
-            base_url = self._get_base_url(switch_ip)
-            response = session.get(f"{base_url}/system", timeout=5)
-            
-            if response.status_code == 200:
-                return True
-            elif response.status_code == 401:
-                logger.debug(f"Session for {switch_ip} is unauthorized")
-                return False
-            else:
-                logger.debug(f"Session validation failed for {switch_ip}: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.debug(f"Session validation error for {switch_ip}: {e}")
+        if switch_ip in self.session_timeouts and time.time() > self.session_timeouts[switch_ip]:
+            logger.debug(f"Session expired for {switch_ip}")
             return False
-        
+        url = f"{self._get_base_url(switch_ip)}/system"
+        r = session.get(url, timeout=5)
+        logger.debug(f"Validate session GET {url}: {r.status_code}")
+        return r.status_code == 200
+
+    def get_supported_versions(self, switch_ip: str) -> List[str]:
+        """Get supported API versions from the switch."""
+        try:
+            response = requests.get(f"https://{switch_ip}/rest", verify=self.config.SSL_VERIFY, timeout=10)
+            if response.status_code == 200:
+                versions_data = response.json()
+                return list(versions_data.keys())
+            return ['v10.09']  # Fallback to confirmed working version
+        except Exception as e:
+            logger.debug(f"Error getting supported versions: {e}")
+            return ['v10.09']  # Fallback to confirmed working version
+    
     def _detect_api_version(self, switch_ip: str) -> str:
-        """Detect which API version to use for this switch."""
+        """Use confirmed working API version v10.09."""
         if switch_ip in self.switch_api_versions:
             return self.switch_api_versions[switch_ip]
-            
-        # Test API versions in order of preference
-        test_versions = ['v1', 'v10.09', 'v10.04', 'latest']
         
-        for version in test_versions:
-            try:
-                session = requests.Session()
-                session.verify = self.config.SSL_VERIFY
-                
-                auth_url = f"https://{switch_ip}/rest/{version}/login"
-                auth_data = f"username={self.config.SWITCH_USER}&password={self.config.SWITCH_PASSWORD}"
-                
-                response = session.post(
-                    auth_url,
-                    data=auth_data,
-                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    # Test if VLAN operations work with this version
-                    vlans_url = f"https://{switch_ip}/rest/{version}/system/vlans"
-                    vlans_response = session.get(vlans_url, timeout=10)
-                    
-                    if vlans_response.status_code == 200:
-                        logger.info(f"Switch {switch_ip}: Using API version {version}")
-                        self.switch_api_versions[switch_ip] = version
-                        # Clean up test session
-                        try:
-                            session.post(f"https://{switch_ip}/rest/{version}/logout", timeout=5)
-                        except:
-                            pass
-                        return version
-                    elif vlans_response.status_code == 410:
-                        logger.info(f"Switch {switch_ip}: API {version} auth works but VLANs blocked (Central?)")
-                        continue
-                        
-            except Exception as e:
-                logger.debug(f"API version {version} failed for {switch_ip}: {e}")
-                continue
-        
-        # Default fallback
-        default_version = 'v10.09'
-        logger.warning(f"Switch {switch_ip}: No optimal API version found, using {default_version}")
-        self.switch_api_versions[switch_ip] = default_version
-        return default_version
-    
+        # Use confirmed working version directly
+        self.switch_api_versions[switch_ip] = 'v10.09'
+        logger.debug(f"Using confirmed working API version v10.09 for {switch_ip}")
+        return 'v10.09'
+
     def _get_base_url(self, switch_ip: str) -> str:
-        """Get base URL for REST API with proper version detection."""
-        api_version = self._detect_api_version(switch_ip)
-        return f"https://{switch_ip}/rest/{api_version}"
-    
+        """Get base URL using confirmed working API version v10.09."""
+        return f"https://{switch_ip}/rest/v10.09"
+
     def _authenticate(self, switch_ip: str) -> requests.Session:
-        """Authenticate and return session with improved session management."""
-        # Check existing session first
+        """Authenticate using confirmed working method: query parameter POST to v10.09."""
         if switch_ip in self.sessions:
-            session = self.sessions[switch_ip]
-            if self._is_session_valid(switch_ip, session):
+            sess = self.sessions[switch_ip]
+            if self._is_session_valid(switch_ip, sess):
                 logger.debug(f"Reusing valid session for {switch_ip}")
-                return session
+                return sess
+            self.cleanup_session(switch_ip, force_logout=False)
+        
+        sess = requests.Session()
+        sess.verify = self.config.SSL_VERIFY
+        
+        # Use confirmed working method: query parameter POST to v10.09
+        auth_url = f"https://{switch_ip}/rest/v10.09/login?username={self.config.SWITCH_USER}&password={self.config.SWITCH_PASSWORD}"
+        logger.debug(f"Authenticating with query parameters: {auth_url}")
+        resp = sess.post(auth_url, headers={'accept': '*/*'}, data="", timeout=10, verify=sess.verify)
+        logger.debug(f"AUTH LOGIN {resp.status_code}\nHEADERS: {resp.headers}\nBODY: {resp.text!r}")
+        logger.debug(f"Cookies after AUTH_LOGIN: {sess.cookies.get_dict()}")
+        
+        if resp.status_code == 200 and sess.cookies.get_dict():
+            self.sessions[switch_ip] = sess
+            self.session_timeouts[switch_ip] = time.time() + 900  # 15 minute timeout
+            return sess
+        else:
+            if resp.status_code == 404:
+                raise Exception(f"Login endpoint not found - switch may not support session authentication")
+            elif resp.status_code == 401:
+                raise Exception(f"Invalid credentials for {switch_ip}")
+            elif resp.status_code == 410:
+                raise Exception(f"Login endpoint deprecated for {switch_ip}")
             else:
-                # Session expired or invalid, clean it up
-                logger.debug(f"Session invalid for {switch_ip}, creating new one")
-                self.cleanup_session(switch_ip, force_logout=False)
-        
-        # Create new session with retry logic for session limits
-        max_retries = 3
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                session = requests.Session()
-                session.verify = self.config.SSL_VERIFY
-                
-                base_url = self._get_base_url(switch_ip)
-                auth_url = f"{base_url}/login"
-                auth_data = f"username={self.config.SWITCH_USER}&password={self.config.SWITCH_PASSWORD}"
-                
-                logger.debug(f"Authentication attempt {attempt + 1} for {switch_ip}")
-                
-                response = session.post(
-                    auth_url,
-                    data=auth_data,
-                    headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    # Check if we got session cookies
-                    if 'Set-Cookie' in response.headers or session.cookies:
-                        # Set session timeout (15 minutes from now)
-                        self.session_timeouts[switch_ip] = time.time() + (15 * 60)
-                        self.sessions[switch_ip] = session
-                        logger.info(f"Successfully authenticated to {switch_ip} (attempt {attempt + 1})")
-                        return session
-                    else:
-                        raise Exception("Authentication succeeded but no session cookie received")
-                        
-                elif response.status_code == 503 and "session limit" in response.text.lower():
-                    # Handle session limit specifically
-                    logger.warning(f"Session limit reached on {switch_ip}, attempt {attempt + 1}")
-                    if attempt < max_retries - 1:
-                        # Try to clean up any existing sessions and wait
-                        self.cleanup_session(switch_ip, force_logout=True)
-                        logger.info(f"Waiting {retry_delay} seconds before retry...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
-                    else:
-                        raise Exception(f"Session limit reached after {max_retries} attempts")
-                else:
-                    # Other authentication failures
-                    error_msg = f"Authentication failed: {response.status_code} - {response.text[:200]}"
-                    if attempt == max_retries - 1:
-                        raise Exception(error_msg)
-                    logger.warning(f"{error_msg}, retrying...")
-                    
-            except requests.exceptions.RequestException as e:
-                error_msg = f"Connection error during authentication: {str(e)}"
-                if attempt == max_retries - 1:
-                    raise Exception(error_msg)
-                logger.warning(f"{error_msg}, retrying...")
-                time.sleep(retry_delay)
-        
-        raise Exception(f"Authentication failed after {max_retries} attempts")
-    
-    def _detect_central_management(self, switch_ip: str, session: requests.Session) -> tuple[bool, str]:
-        """Detect if switch is Central-managed by testing write operations."""
-        try:
-            base_url = self._get_base_url(switch_ip)
-            
-            # Test write operation by attempting invalid VLAN creation
-            test_response = session.post(
-                f"{base_url}/system/vlans", 
-                json={"id": 99999, "name": "central_test", "admin": "up"}, 
-                timeout=5
-            )
-            
-            if test_response.status_code == 410:
-                return True, "Central management detected - write operations blocked"
-            elif test_response.status_code == 400:
-                # 400 Bad Request means endpoint works but data is invalid (good sign)
-                return False, "Direct API access available"
-            elif test_response.status_code == 403:
-                return True, "Write operations forbidden - likely Central managed"
-            else:
-                return False, f"API test response: {test_response.status_code}"
-                
-        except Exception as e:
-            logger.debug(f"Central detection error for {switch_ip}: {e}")
-            return False, "Unable to determine management type"
-    
+                raise Exception(f"Failed to authenticate to {switch_ip}: {resp.status_code} - {resp.text}")
+
+    def _detect_central_management(self, switch_ip: str, session: requests.Session) -> tuple[bool,str]:
+        url = f"{self._get_base_url(switch_ip)}/system/vlans"
+        r = session.post(url, json={"id":99999,"name":"central_test","admin":"up"}, timeout=5)
+        logger.debug(f"CENTRAL test POST {url}: {r.status_code}\nBODY: {r.text!r}")
+        if r.status_code in (410,403):
+            return True, 'Central-managed'
+        if r.status_code == 400:
+            return False, 'Direct API OK'
+        return False, f'Unexpected {r.status_code}'
+
     def test_connection(self, switch_ip: str) -> Dict[str, Any]:
-        """Test connection to switch with Central management detection."""
         try:
-            session = self._authenticate(switch_ip)
-            base_url = self._get_base_url(switch_ip)
-            
-            # Get system information
-            response = session.get(f"{base_url}/system", timeout=10)
-            
-            if response.status_code == 200:
-                system_info = response.json()
-                
-                # Detect Central management
-                is_central_managed, central_msg = self._detect_central_management(switch_ip, session)
-                
-                result = {
-                    'status': 'online',
-                    'ip_address': switch_ip,
-                    'firmware_version': system_info.get('software_version'),
-                    'model': system_info.get('platform_name'),
-                    'api_version': self.switch_api_versions.get(switch_ip, 'unknown'),
-                    'is_central_managed': is_central_managed,
-                    'management_info': central_msg,
-                    'last_seen': datetime.now().isoformat(),
-                    'error_message': None
-                }
-                
-                inventory.update_switch_status(
-                    switch_ip,
-                    "online",
-                    firmware_version=result['firmware_version'],
-                    model=result['model']
-                )
-                
-                return result
-            else:
-                error_msg = f"Failed to get system info: {response.status_code}"
-                raise Exception(error_msg)
-                
-        except Exception as e:
-            error_msg = str(e)
-            result = {
-                'status': 'error',
-                'ip_address': switch_ip,
-                'error_message': error_msg,
-                'is_central_managed': False,
-                'management_info': None,
-                'last_seen': None
+            sess = self._authenticate(switch_ip)
+            base = self._get_base_url(switch_ip)
+            r = sess.get(f"{base}/system", timeout=10)
+            logger.debug(f"GET {base}/system: {r.status_code}")
+            if r.status_code != 200:
+                raise Exception(f"System info failed: {r.status_code}")
+            info = r.json()
+            cm, msg = self._detect_central_management(switch_ip, sess)
+            res = {
+                'status':'online',
+                'ip_address':switch_ip,
+                'firmware_version':info.get('software_version'),
+                'model':info.get('platform_name'),
+                'api_version':self.switch_api_versions.get(switch_ip),
+                'is_central_managed':cm,
+                'management_info':msg,
+                'last_seen':datetime.now().isoformat(),
+                'error_message':None
             }
-            inventory.update_switch_status(switch_ip, "error", error_msg)
-            return result
-        finally:
-            # Clean up session after connection test
-            self.cleanup_session(switch_ip, force_logout=True)
-    
-    def list_vlans(self, switch_ip: str, load_details: bool = True) -> List[Dict[str, Any]]:
-        """
-        List VLANs with REAL VLAN NAMES using depth=2 parameter or individual requests.
-        """
-        try:
-            session = self._authenticate(switch_ip)
-            base_url = self._get_base_url(switch_ip)
-            api_version = self.switch_api_versions.get(switch_ip, 'v1')
-            
-            if load_details and api_version in ['v10.04', 'v10.09', 'v10.15', 'latest']:
-                # Use depth=2 and selector=configuration for bulk VLAN details (v10.x APIs)
-                response = session.get(
-                    f"{base_url}/system/vlans?depth=2&selector=configuration", 
-                    timeout=15
-                )
-                
-                if response.status_code == 200:
-                    vlans_data = response.json()
-                    vlan_list = []
-                    
-                    logger.info(f"Retrieved detailed VLANs using depth=2 from {switch_ip}")
-                    
-                    for vlan_id_str, vlan_detail in vlans_data.items():
-                        try:
-                            vlan_id_num = int(vlan_id_str)
-                            if not (1 <= vlan_id_num <= 4094):
-                                continue
-                            
-                            vlan_list.append({
-                                'id': vlan_id_num,
-                                'name': vlan_detail.get('name', f'VLAN{vlan_id_num}'),
-                                'admin_state': vlan_detail.get('admin', 'unknown'),
-                                'oper_state': 'up',  # Not available in configuration selector
-                                'details_loaded': True
-                            })
-                            
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Error processing VLAN {vlan_id_str}: {e}")
-                            continue
-                    
-                    logger.info(f"Retrieved {len(vlan_list)} VLANs with names from {switch_ip}")
-                    inventory.update_switch_status(switch_ip, "online")
-                    return sorted(vlan_list, key=lambda x: x['id'])
-                
-            # Fallback: Get VLAN list first, then individual details
-            response = session.get(f"{base_url}/system/vlans", timeout=10)
-            
-            if response.status_code == 200:
-                vlans_data = response.json()
-                vlan_list = []
-                
-                logger.info(f"VLAN response type: {type(vlans_data)} on {switch_ip}")
-                
-                # Handle different response formats
-                if isinstance(vlans_data, dict):
-                    # Dictionary format: {"1": "/rest/vX.X/system/vlans/1", ...}
-                    logger.info(f"Processing {len(vlans_data)} VLANs (dict format) from {switch_ip}")
-                    
-                    for vlan_id_str, vlan_uri in vlans_data.items():
-                        try:
-                            vlan_id_num = int(vlan_id_str)
-                            if not (1 <= vlan_id_num <= 4094):
-                                continue
-                            
-                            if load_details:
-                                # Get detailed information for each VLAN
-                                try:
-                                    vlan_detail_response = session.get(f"{base_url}/system/vlans/{vlan_id_num}", timeout=5)
-                                    if vlan_detail_response.status_code == 200:
-                                        vlan_detail = vlan_detail_response.json()
-                                        vlan_name = vlan_detail.get('name', f'VLAN{vlan_id_num}')
-                                        admin_state = vlan_detail.get('admin', 'unknown')
-                                        oper_state = vlan_detail.get('oper_state', 'unknown')
-                                    else:
-                                        vlan_name = f'VLAN{vlan_id_num}'
-                                        admin_state = 'unknown'
-                                        oper_state = 'unknown'
-                                except Exception as e:
-                                    logger.warning(f"Error getting details for VLAN {vlan_id_num}: {e}")
-                                    vlan_name = f'VLAN{vlan_id_num}'
-                                    admin_state = 'unknown'
-                                    oper_state = 'unknown'
-                            else:
-                                # Basic information only
-                                vlan_name = f'VLAN{vlan_id_num}'
-                                admin_state = 'up'
-                                oper_state = 'up'
-                            
-                            vlan_list.append({
-                                'id': vlan_id_num,
-                                'name': vlan_name,
-                                'admin_state': admin_state,
-                                'oper_state': oper_state,
-                                'details_loaded': load_details
-                            })
-                            
-                        except (ValueError, requests.RequestException) as e:
-                            logger.warning(f"Error processing VLAN {vlan_id_str}: {e}")
-                            continue
-                            
-                elif isinstance(vlans_data, list):
-                    # List format: ["/rest/v1/system/vlans/1", ...]
-                    logger.info(f"Processing {len(vlans_data)} VLANs (list format) from {switch_ip}")
-                    
-                    for vlan_uri in vlans_data:
-                        try:
-                            if isinstance(vlan_uri, str):
-                                vlan_id_str = vlan_uri.split('/')[-1]
-                                vlan_id_num = int(vlan_id_str)
-                                
-                                if not (1 <= vlan_id_num <= 4094):
-                                    continue
-                                
-                                if load_details:
-                                    # Get detailed information for each VLAN
-                                    try:
-                                        vlan_detail_response = session.get(f"{base_url}/system/vlans/{vlan_id_num}", timeout=5)
-                                        if vlan_detail_response.status_code == 200:
-                                            vlan_detail = vlan_detail_response.json()
-                                            vlan_name = vlan_detail.get('name', f'VLAN{vlan_id_num}')
-                                            admin_state = vlan_detail.get('admin', 'up')
-                                            oper_state = vlan_detail.get('oper_state', 'up')
-                                        else:
-                                            vlan_name = f'VLAN{vlan_id_num}'
-                                            admin_state = 'unknown'
-                                            oper_state = 'unknown'
-                                    except Exception as e:
-                                        logger.warning(f"Error getting details for VLAN {vlan_id_num}: {e}")
-                                        vlan_name = f'VLAN{vlan_id_num}'
-                                        admin_state = 'unknown'
-                                        oper_state = 'unknown'
-                                else:
-                                    # Basic information only
-                                    vlan_name = f'VLAN{vlan_id_num}'
-                                    admin_state = 'up'
-                                    oper_state = 'up'
-                                
-                                vlan_list.append({
-                                    'id': vlan_id_num,
-                                    'name': vlan_name,
-                                    'admin_state': admin_state,
-                                    'oper_state': oper_state,
-                                    'details_loaded': load_details
-                                })
-                                
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Error processing VLAN URI {vlan_uri}: {e}")
-                            continue
-                else:
-                    raise Exception(f"Unexpected VLAN response format: {type(vlans_data)}")
-                
-                logger.info(f"Retrieved {len(vlan_list)} VLANs from {switch_ip} (details_loaded={load_details})")
-                inventory.update_switch_status(switch_ip, "online")
-                return sorted(vlan_list, key=lambda x: x['id'])
-                
-            elif response.status_code == 410:
-                error_msg = f"VLAN listing blocked (Central management restricts direct access)"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            else:
-                error_msg = f"Failed to list VLANs: {response.status_code} - {response.text}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-                
+            inventory.update_switch_status(switch_ip,'online',firmware_version=res['firmware_version'],model=res['model'])
+            return res
         except Exception as e:
-            # Clean up session on any error to prevent session buildup
-            if "session limit" in str(e).lower():
-                logger.warning(f"Session limit detected, cleaning up sessions for {switch_ip}")
-                self.cleanup_session(switch_ip, force_logout=True)
-            
-            error_msg = f"Error listing VLANs on {switch_ip}: {str(e)}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
-    
+            msg = str(e)
+            inventory.update_switch_status(switch_ip,'error',msg)
+            return {
+                'status':'error',
+                'ip_address':switch_ip,
+                'error_message':msg,
+                'is_central_managed':False,
+                'management_info':None,
+                'last_seen':None
+            }
+        finally:
+            self.cleanup_session(switch_ip, force_logout=True)
+
+    def list_vlans(self, switch_ip: str, load_details: bool = True) -> List[Dict[str, Any]]:
+        """List VLANs with real names, supports depth=2 for v10.x."""
+        session = self._authenticate(switch_ip)
+        base = self._get_base_url(switch_ip)
+        version = self.switch_api_versions.get(switch_ip,'v1')
+        # Attempt bulk details
+        if load_details and version in ['v10.04','v10.09','latest']:
+            r = session.get(f"{base}/system/vlans?depth=2&selector=configuration", timeout=15)
+            logger.debug(f"Depth-2 VLAN GET: {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                vlans=[]
+                for vid,det in data.items():
+                    try:
+                        vid_num = int(vid)
+                        if 1<=vid_num<=4094:
+                            vlans.append({
+                                'id':vid_num,
+                                'name':det.get('name',f'VLAN{vid_num}'),
+                                'admin_state':det.get('admin','unknown'),
+                                'oper_state':'up',
+                                'details_loaded':True
+                            })
+                    except Exception:
+                        continue
+                inventory.update_switch_status(switch_ip,'online')
+                return sorted(vlans,key=lambda x: x['id'])
+        # Fallback
+        r = session.get(f"{base}/system/vlans", timeout=10)
+        logger.debug(f"Basic VLAN list GET: {r.status_code}")
+        if r.status_code != 200:
+            if r.status_code==410:
+                raise Exception('VLAN listing blocked')
+            raise Exception(f"VLAN list failed: {r.status_code}")
+        data = r.json()
+        vlans = []
+        if isinstance(data, dict):
+            for vid, uri in data.items():
+                try:
+                    vid_num=int(vid)
+                    if not (1<=vid_num<=4094): continue
+                    # fetch detail if requested
+                    if load_details:
+                        dr = session.get(f"{base}/system/vlans/{vid_num}", timeout=5)
+                        if dr.status_code==200:
+                            det=dr.json()
+                            name=det.get('name',f'VLAN{vid_num}')
+                            admin=det.get('admin','unknown')
+                            oper=det.get('oper_state','unknown')
+                        else:
+                            name=f'VLAN{vid_num}'
+                            admin=oper='unknown'
+                    else:
+                        name=f'VLAN{vid_num}'; admin=oper='up'
+                    vlans.append({'id':vid_num,'name':name,'admin_state':admin,'oper_state':oper,'details_loaded':load_details})
+                except Exception:
+                    continue
+        elif isinstance(data, list):
+            for uri in data:
+                try:
+                    vid_num=int(uri.rstrip('/').split('/')[-1])
+                    if not (1<=vid_num<=4094): continue
+                    # same detail fetch logic as above
+                    dr = session.get(f"{base}/system/vlans/{vid_num}", timeout=5)
+                    if dr.status_code==200:
+                        det=dr.json()
+                        name=det.get('name',f'VLAN{vid_num}')
+                        admin=det.get('admin','up')
+                        oper=det.get('oper_state','up')
+                    else:
+                        name=f'VLAN{vid_num}'; admin=oper='unknown'
+                    vlans.append({'id':vid_num,'name':name,'admin_state':admin,'oper_state':oper,'details_loaded':load_details})
+                except Exception:
+                    continue
+        inventory.update_switch_status(switch_ip,'online')
+        return sorted(vlans,key=lambda x: x['id'])
+
     def create_vlan(self, switch_ip: str, vlan_id: int, name: str) -> str:
-        """Create VLAN with enhanced Central management error messages."""
-        # Input validation
+        """Create VLAN using confirmed working method: POST to collection endpoint."""
         if not (1 <= vlan_id <= 4094):
             raise ValueError(f"VLAN ID must be between 1 and 4094, got {vlan_id}")
-        
-        if not name or not name.strip():
+        if not name.strip():
             raise ValueError("VLAN name cannot be empty")
         
-        name = name.strip()
+        session = self._authenticate(switch_ip)
+        base = self._get_base_url(switch_ip)
         
-        try:
-            session = self._authenticate(switch_ip)
-            base_url = self._get_base_url(switch_ip)
-            api_version = self.switch_api_versions.get(switch_ip, 'v1')
-            
-            # Check if VLAN already exists
-            check_response = session.get(
-                f"{base_url}/system/vlans/{vlan_id}",
-                timeout=10,
-                verify=self.config.SSL_VERIFY
-            )
-            
-            if check_response.status_code == 200:
-                logger.info(f"VLAN {vlan_id} already exists on {switch_ip}")
-                return f"VLAN {vlan_id} already exists on {switch_ip}"
-            
-            # Create VLAN using appropriate method based on API version
-            if api_version == 'v1':
-                # v1 API uses POST to collection endpoint
-                vlan_data = {
-                    "name": name,
-                    "id": vlan_id,
-                    "type": "static", 
-                    "admin": "up"
-                }
-                
-                response = session.post(
-                    f"{base_url}/system/vlans",  # Collection endpoint
-                    json=vlan_data,
-                    timeout=10,
-                    verify=self.config.SSL_VERIFY
-                )
-                expected_status = 201  # Created
-                
-            else:
-                # v10.x APIs use PUT to individual resource
-                vlan_data = {
-                    "name": name,
-                    "admin": "up"
-                }
-                
-                response = session.put(
-                    f"{base_url}/system/vlans/{vlan_id}",  # Individual resource
-                    json=vlan_data,
-                    timeout=10,
-                    verify=self.config.SSL_VERIFY
-                )
-                expected_status = 200  # OK
-            
-            if response.status_code == expected_status:
-                logger.info(f"Successfully created VLAN {vlan_id} ({name}) on {switch_ip}")
-                inventory.update_switch_status(switch_ip, "online")
-                return f"Successfully created VLAN {vlan_id} ('{name}') on {switch_ip}"
-            elif response.status_code == 410:
-                error_msg = (f"VLAN creation blocked - This switch appears to be managed by Aruba Central. "
-                            f"Central restricts direct API write operations to maintain control. "
-                            f"Use Central's interface for VLAN management or switch to standalone management.")
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            elif response.status_code == 403:
-                error_msg = (f"Permission denied - Either insufficient user privileges or Central management restrictions. "
-                            f"Verify admin credentials and check if switch is Central-managed.")
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            else:
-                error_msg = f"Failed to create VLAN: {response.status_code} - {response.text}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-                
-        except Exception as e:
-            # Clean up session on error
-            if "session limit" in str(e).lower():
-                self.cleanup_session(switch_ip, force_logout=True)
-            
-            error_msg = f"Error creating VLAN {vlan_id} on {switch_ip}: {str(e)}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
-    
-    def delete_vlan(self, switch_ip: str, vlan_id: int) -> str:
-        """Delete VLAN using direct REST API with session management."""
-        # Safety check: don't delete default VLANs
-        if vlan_id == 1:
-            raise ValueError("Cannot delete default VLAN 1")
+        # Check if VLAN already exists
+        start_time = time.time()
+        cr = session.get(f"{base}/system/vlans/{vlan_id}", timeout=10)
+        self._log_api_call('GET', f"{base}/system/vlans/{vlan_id}", {}, None, cr, start_time, switch_ip)
+        logger.debug(f"VLAN {vlan_id} exists check: {cr.status_code}")
+        if cr.status_code == 200:
+            return f"VLAN {vlan_id} already exists on {switch_ip}"
         
-        try:
-            session = self._authenticate(switch_ip)
-            base_url = self._get_base_url(switch_ip)
-            
-            # Check if VLAN exists
-            check_response = session.get(f"{base_url}/system/vlans/{vlan_id}", timeout=10)
-            
-            if check_response.status_code == 404:
-                return f"VLAN {vlan_id} does not exist on {switch_ip}"
-            
-            # Delete VLAN
-            response = session.delete(f"{base_url}/system/vlans/{vlan_id}", timeout=10)
-            
-            if response.status_code in [200, 204]:
-                logger.info(f"Successfully deleted VLAN {vlan_id} from {switch_ip}")
-                inventory.update_switch_status(switch_ip, "online")
-                return f"Successfully deleted VLAN {vlan_id} from {switch_ip}"
-            elif response.status_code == 410:
-                error_msg = f"VLAN deletion blocked (Central management restricts write operations)"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            else:
-                error_msg = f"Failed to delete VLAN: {response.status_code} - {response.text}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
-                
-        except Exception as e:
-            # Clean up session on error
-            if "session limit" in str(e).lower():
-                self.cleanup_session(switch_ip, force_logout=True)
-                
-            error_msg = f"Error deleting VLAN {vlan_id} from {switch_ip}: {str(e)}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
+        # Use confirmed working method: POST to collection endpoint
+        payload = {
+            "name": name,
+            "id": vlan_id,
+            "type": "static",
+            "admin": "up"
+        }
+        
+        start_time = time.time()
+        resp = session.post(f"{base}/system/vlans", json=payload, timeout=10)
+        self._log_api_call('POST', f"{base}/system/vlans", {'Content-Type': 'application/json'}, payload, resp, start_time, switch_ip)
+        logger.debug(f"Create VLAN response: {resp.status_code}\nBODY: {resp.text}")
+        
+        if resp.status_code == 201:  # Expected success code for POST creation
+            inventory.update_switch_status(switch_ip, 'online')
+            return f"Successfully created VLAN {vlan_id} ('{name}') on {switch_ip}"
+        elif resp.status_code == 400:
+            raise Exception(f"Invalid VLAN data: {resp.text}")
+        elif resp.status_code == 403:
+            raise Exception(f"Permission denied - check user privileges: {resp.text}")
+        elif resp.status_code == 410:
+            raise Exception(f"VLAN creation blocked - switch may be Central-managed: {resp.text}")
+        elif resp.status_code == 404:
+            raise Exception(f"VLAN endpoint not found - API version issue: {resp.text}")
+        else:
+            raise Exception(f"Failed to create VLAN: {resp.status_code} - {resp.text}")
 
-# Global direct REST manager instance
+    def delete_vlan(self, switch_ip: str, vlan_id: int) -> str:
+        if vlan_id==1:
+            raise ValueError("Cannot delete default VLAN 1")
+        session = self._authenticate(switch_ip)
+        base = self._get_base_url(switch_ip)
+        dr = session.get(f"{base}/system/vlans/{vlan_id}", timeout=10)
+        logger.debug(f"Delete VLAN exists check: {dr.status_code}")
+        if dr.status_code==404:
+            return f"VLAN {vlan_id} does not exist on {switch_ip}"
+        resp = session.delete(f"{base}/system/vlans/{vlan_id}", timeout=10)
+        logger.debug(f"Delete VLAN response: {resp.status_code}\nBODY: {resp.text}")
+        if resp.status_code in (200,204):
+            inventory.update_switch_status(switch_ip,'online')
+            return f"Successfully deleted VLAN {vlan_id} from {switch_ip}"
+        if resp.status_code == 410:
+            raise Exception("VLAN deletion blocked (Central-managed)")
+        raise Exception(f"Failed to delete VLAN: {resp.status_code} - {resp.text}")
+
+# Global instance
 direct_rest_manager = DirectRestManager()
