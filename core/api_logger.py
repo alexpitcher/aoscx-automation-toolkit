@@ -150,13 +150,13 @@ class APILogger:
         
         # Apply filters
         if switch_ip:
-            calls = [call for call in calls if call.get('switch_ip') == switch_ip]
+            calls = [call for call in calls if (call.get('switch_ip') or '') == switch_ip]
         
         if category:
-            calls = [call for call in calls if call.get('category') == category]
+            calls = [call for call in calls if (call.get('category') or '') == category]
         
         if success_only is not None:
-            calls = [call for call in calls if call.get('success') == success_only]
+            calls = [call for call in calls if call.get('success', False) == success_only]
         
         # Return most recent calls first
         return calls[-limit:] if limit else calls
@@ -180,7 +180,7 @@ class APILogger:
         success_rate = (successful_calls / total_calls) * 100
         
         # Calculate average duration
-        durations = [c['duration_ms'] for c in calls if c['duration_ms']]
+        durations = [c['duration_ms'] for c in calls if c.get('duration_ms') is not None and isinstance(c.get('duration_ms'), (int, float))]
         avg_duration = sum(durations) / len(durations) if durations else 0
         
         # Category breakdown
@@ -192,7 +192,7 @@ class APILogger:
         # Switch breakdown
         switches = {}
         for call in calls:
-            switch = call.get('switch_ip', 'unknown')
+            switch = call.get('switch_ip') or 'unknown'
             switches[switch] = switches.get(switch, 0) + 1
         
         return {

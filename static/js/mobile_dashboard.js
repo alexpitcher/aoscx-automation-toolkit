@@ -896,6 +896,23 @@ class MobileDashboard {
         const errorType = data.error_type || 'unknown_error';
         const switchIp = data.switch_ip;
         
+        // Handle HTTP status code-specific errors
+        if (response.status === 429) {
+            this.showErrorModal(
+                'Session Limit Reached', 
+                data.error || 'Session limit reached, please wait or clean sessions',
+                data.suggestion || 'This typically resolves in 5-10 minutes.',
+                ['cleanup', 'retry'],
+                switchIp
+            );
+            return;
+        }
+        
+        if (response.status === 401 && !data.error_type) {
+            this.showAlert('Incorrect username or password', 'error');
+            return;
+        }
+        
         const errorMessages = {
             'session_limit': {
                 title: 'Session Limit Reached',
@@ -947,18 +964,18 @@ class MobileDashboard {
         const switchIp = errorData.switch_ip;
         const modal = this.createModal('Session Limit Reached', `
             <div class="error-dialog">
-                <div class="error-icon">⚠️</div>
+                <div class="error-icon">WARNING</div>
                 <p><strong>Switch ${switchIp} has reached its session limit.</strong></p>
                 <p>${errorData.suggestion || 'This typically resolves automatically within 5-10 minutes.'}</p>
                 <div class="session-limit-actions">
                     <button class="btn btn-primary" onclick="dashboard.attemptSessionCleanup('${switchIp}')">
-                        <span class="btn-icon">🧹</span> Clean Sessions
+                        Clean Sessions
                     </button>
                     <button class="btn btn-secondary" onclick="dashboard.retryConnection('${switchIp}')">
-                        <span class="btn-icon">🔄</span> Retry
+                        Retry
                     </button>
                     <button class="btn btn-secondary" onclick="dashboard.closeModal()">
-                        <span class="btn-icon">⏰</span> Wait
+                        Wait
                     </button>
                 </div>
                 <div class="countdown-timer" id="session-retry-timer" style="display: none;">
@@ -974,11 +991,11 @@ class MobileDashboard {
             switch(action) {
                 case 'retry':
                     return `<button class="btn btn-primary" onclick="dashboard.retryLastAction()">
-                        <span class="btn-icon">🔄</span> Retry
+                        Retry
                     </button>`;
                 case 'cleanup':
                     return `<button class="btn btn-secondary" onclick="dashboard.attemptSessionCleanup('${switchIp}')">
-                        <span class="btn-icon">🧹</span> Clean Sessions
+                        Clean Sessions
                     </button>`;
                 default:
                     return '';
@@ -987,7 +1004,7 @@ class MobileDashboard {
         
         const modal = this.createModal(title, `
             <div class="error-dialog">
-                <div class="error-icon">❌</div>
+                <div class="error-icon">ERROR</div>
                 <p><strong>${message}</strong></p>
                 ${suggestion ? `<p class="suggestion">${suggestion}</p>` : ''}
                 <div class="error-actions">
@@ -1085,7 +1102,7 @@ class MobileDashboard {
         spinner.innerHTML = `
             <div class="spinner-overlay">
                 <div class="spinner">
-                    <div class="spinner-icon">⏳</div>
+                    <div class="spinner-icon">Loading...</div>
                     <div class="spinner-message">${message}</div>
                 </div>
             </div>
@@ -1130,6 +1147,35 @@ class MobileDashboard {
                 }, 300);
             }
         }, 3000);
+    }
+    
+    showRetryButton(sectionId, message, retryCallback) {
+        const section = document.getElementById(sectionId);
+        if (!section) {
+            console.error(`Section ${sectionId} not found for retry button`);
+            return;
+        }
+        
+        // Remove any existing retry banners
+        const existingRetry = section.querySelector('.retry-banner');
+        if (existingRetry) {
+            existingRetry.remove();
+        }
+        
+        // Create retry banner
+        const retryBanner = document.createElement('div');
+        retryBanner.className = 'retry-banner';
+        retryBanner.innerHTML = `
+            <div class="alert alert-warning" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                <span>${message}</span>
+                <button class="btn btn-primary btn-sm retry-btn" onclick="this.closest('.retry-banner').remove(); (${retryCallback.toString()})()">
+                    Retry
+                </button>
+            </div>
+        `;
+        
+        // Insert at the top of the section
+        section.insertBefore(retryBanner, section.firstChild);
     }
 
     setButtonLoading(buttonId, loading) {
@@ -1424,24 +1470,53 @@ class MobileDashboard {
         }
     }
     
-    loadDeviceOverview() {
+    async loadDeviceOverview() {
         const selectedSwitch = document.getElementById('manage-switch-selector').value;
         if (!selectedSwitch) {
             this.updateDeviceInfo({});
             return;
         }
         
-        // Mock device information for now
-        const mockDeviceInfo = {
-            model: 'Aruba CX 6200-24G-4SFP+',
-            portCount: '24',
-            poeStatus: 'online',
-            powerStatus: 'online', 
-            fanStatus: 'online',
-            cpuUsage: Math.floor(Math.random() * 40) + 5 // Random CPU 5-45%
-        };
-        
-        this.updateDeviceInfo(mockDeviceInfo);
+        try {
+            console.log(`Loading device overview for ${selectedSwitch}`);
+            
+            const response = await fetch(`/api/switches/${selectedSwitch}/overview`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                console.log('Device overview data:', data);
+                this.updateDeviceInfo({
+                    model: data.model || 'Unknown',
+                    portCount: data.port_count || '0',
+                    poeStatus: data.poe_status || 'unknown',
+                    powerStatus: data.power_status || 'unknown',
+                    fanStatus: data.fan_status || 'unknown',
+                    cpuUsage: data.cpu_usage || 0
+                });
+            } else {
+                console.error('Failed to load device overview:', data.error);
+                this.showRetryButton('overview-section', 'Failed to load device overview. ', () => this.loadDeviceOverview());
+                this.updateDeviceInfo({
+                    model: 'Error loading device info',
+                    portCount: 'Unknown',
+                    poeStatus: 'unknown',
+                    powerStatus: 'unknown', 
+                    fanStatus: 'unknown',
+                    cpuUsage: 0
+                });
+            }
+        } catch (error) {
+            console.error('Error loading device overview:', error);
+            this.showRetryButton('overview-section', 'Network error loading device overview. ', () => this.loadDeviceOverview());
+            this.updateDeviceInfo({
+                model: 'Network Error',
+                portCount: 'Unknown',
+                poeStatus: 'unknown',
+                powerStatus: 'unknown', 
+                fanStatus: 'unknown',
+                cpuUsage: 0
+            });
+        }
     }
     
     updateDeviceInfo(info) {
@@ -1481,17 +1556,32 @@ class MobileDashboard {
         }
     }
     
-    loadVlansForManage() {
+    async loadVlansForManage() {
         const selectedSwitch = document.getElementById('manage-switch-selector').value;
         if (!selectedSwitch) {
             this.updateVlansList([]);
             return;
         }
         
-        // Use existing VLAN loading logic but display in manage tab format
-        this.loadVlansForSwitch(selectedSwitch, (vlans) => {
-            this.updateVlansList(vlans);
-        });
+        try {
+            console.log(`Loading VLANs for ${selectedSwitch}`);
+            
+            const response = await fetch(`/api/switches/${selectedSwitch}/vlans`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                console.log('VLANs data:', data);
+                this.updateVlansList(data.vlans || []);
+            } else {
+                console.error('Failed to load VLANs:', data.error);
+                this.showRetryButton('vlans-section', 'Failed to load VLANs. ', () => this.loadVlansForManage());
+                this.updateVlansList([]);
+            }
+        } catch (error) {
+            console.error('Error loading VLANs:', error);
+            this.showRetryButton('vlans-section', 'Network error loading VLANs. ', () => this.loadVlansForManage());
+            this.updateVlansList([]);
+        }
     }
     
     updateVlansList(vlans) {
@@ -1524,7 +1614,7 @@ class MobileDashboard {
         `).join('');
     }
     
-    loadInterfacesForManage() {
+    async loadInterfacesForManage() {
         const selectedSwitch = document.getElementById('manage-switch-selector').value;
         if (!selectedSwitch) {
             this.updateInterfacesList([]);
@@ -1532,18 +1622,28 @@ class MobileDashboard {
             return;
         }
         
-        // Mock interfaces data for now
-        const mockInterfaces = [];
-        for (let i = 1; i <= 24; i++) {
-            mockInterfaces.push({
-                name: `1/1/${i}`,
-                status: Math.random() > 0.3 ? 'up' : 'down',
-                description: `Port ${i}`
-            });
+        try {
+            console.log(`Loading interfaces for ${selectedSwitch}`);
+            
+            const response = await fetch(`/api/switches/${selectedSwitch}/interfaces`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                console.log('Interfaces data:', data);
+                this.updateInterfacesList(data.interfaces || []);
+                this.updatePortMap(data.interfaces || []);
+            } else {
+                console.error('Failed to load interfaces:', data.error);
+                this.showRetryButton('interfaces-section', 'Failed to load interfaces. ', () => this.loadInterfacesForManage());
+                this.updateInterfacesList([]);
+                this.updatePortMap([]);
+            }
+        } catch (error) {
+            console.error('Error loading interfaces:', error);
+            this.showRetryButton('interfaces-section', 'Network error loading interfaces. ', () => this.loadInterfacesForManage());
+            this.updateInterfacesList([]);
+            this.updatePortMap([]);
         }
-        
-        this.updateInterfacesList(mockInterfaces);
-        this.updatePortMap(mockInterfaces);
     }
     
     updateInterfacesList(interfaces) {
@@ -1610,20 +1710,41 @@ class MobileDashboard {
         }).join('');
     }
     
-    updateManageSwitchSelector() {
+    async updateManageSwitchSelector() {
         const selector = document.getElementById('manage-switch-selector');
         if (!selector) return;
         
-        // Clear existing options
-        selector.innerHTML = '<option value="">Select a switch...</option>';
-        
-        // Add switches to selector
-        this.switches.forEach((switchInfo, ip) => {
-            const option = document.createElement('option');
-            option.value = ip;
-            option.textContent = switchInfo.name ? `${switchInfo.name} (${ip})` : ip;
-            selector.appendChild(option);
-        });
+        try {
+            // Fetch switches from API
+            const response = await fetch('/api/switches');
+            const data = await response.json();
+            
+            if (response.ok && data.switches) {
+                // Clear existing options
+                selector.innerHTML = '<option value="">Select a switch...</option>';
+                
+                // Add switches to selector
+                data.switches.forEach(switchInfo => {
+                    const option = document.createElement('option');
+                    option.value = switchInfo.ip_address;
+                    option.textContent = switchInfo.name ? `${switchInfo.name} (${switchInfo.ip_address})` : switchInfo.ip_address;
+                    selector.appendChild(option);
+                });
+                
+                // Update internal switches map
+                this.switches.clear();
+                data.switches.forEach(switchInfo => {
+                    this.switches.set(switchInfo.ip_address, switchInfo);
+                });
+                
+            } else {
+                console.error('Failed to load switches for selector:', data.error);
+                selector.innerHTML = '<option value="">No switches available</option>';
+            }
+        } catch (error) {
+            console.error('Error loading switches for selector:', error);
+            selector.innerHTML = '<option value="">Error loading switches</option>';
+        }
         
         // Add event listener for switch change
         selector.removeEventListener('change', this.handleManageSwitchChange);
@@ -1632,23 +1753,229 @@ class MobileDashboard {
     
     handleManageSwitchChange(event) {
         const selectedSwitch = event.target.value;
-        this.currentSwitch = selectedSwitch;
+        this.selectedSwitch = selectedSwitch;
+        this.currentSwitch = selectedSwitch; // Keep for backward compatibility
         
-        // Refresh the current manage section
-        const activeSection = document.querySelector('.subnav-btn.active');
-        if (activeSection) {
-            const sectionName = activeSection.dataset.section;
-            this.showManageSection(sectionName);
+        if (selectedSwitch) {
+            // Load all manage section data for the selected switch
+            this.loadDeviceOverview();
+            this.loadVlansForManage();
+            this.loadInterfacesForManage();
+            this.loadPortMap();
+        } else {
+            // Clear sections if no switch selected
+            this.clearManageSections();
         }
     }
     
-    // Stub methods for edit buttons
+    clearManageSections() {
+        // Clear overview info
+        const overviewInfo = document.getElementById('overview-info');
+        if (overviewInfo) {
+            overviewInfo.innerHTML = '<p class="text-muted-foreground">Select a switch to view overview</p>';
+        }
+        
+        // Clear VLANs list
+        const vlansList = document.getElementById('vlans-list');
+        if (vlansList) {
+            vlansList.innerHTML = '<p class="text-muted-foreground">Select a switch to view VLANs</p>';
+        }
+        
+        // Clear interfaces list
+        const interfacesList = document.getElementById('interfaces-list');
+        if (interfacesList) {
+            interfacesList.innerHTML = '<p class="text-muted-foreground">Select a switch to view interfaces</p>';
+        }
+        
+        // Clear port map
+        const portMap = document.getElementById('port-map');
+        if (portMap) {
+            portMap.innerHTML = '<p class="text-muted-foreground">Select a switch to view port map</p>';
+        }
+    }
+    
+    async loadPortMap() {
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        const portMapContainer = document.getElementById('port-map');
+        
+        if (!selectedSwitch) {
+            if (portMapContainer) {
+                portMapContainer.innerHTML = '<p class="text-muted-foreground">Select a switch to view port map</p>';
+            }
+            return;
+        }
+        
+        if (portMapContainer) {
+            portMapContainer.innerHTML = '<div class="text-center py-4"><div class="inline-flex items-center gap-2"><div class="loading-spinner"></div>Loading port map...</div></div>';
+        }
+        
+        try {
+            console.log(`Loading port map for ${selectedSwitch}`);
+            
+            const response = await fetch(`/api/switches/${selectedSwitch}/interfaces`);
+            const data = await response.json();
+            
+            if (response.ok && data.interfaces) {
+                this.renderPortMap(data.interfaces);
+            } else {
+                console.error('Failed to load port map:', data.error);
+                if (portMapContainer) {
+                    portMapContainer.innerHTML = `
+                        <div class="text-center py-4 text-destructive">
+                            <p>Failed to load port map</p>
+                            <button class="retry-btn mt-2" onclick="dashboard.loadPortMap()">Retry</button>
+                        </div>
+                    `;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading port map:', error);
+            if (portMapContainer) {
+                portMapContainer.innerHTML = `
+                    <div class="text-center py-4 text-destructive">
+                        <p>Network error loading port map</p>
+                        <button class="retry-btn mt-2" onclick="dashboard.loadPortMap()">Retry</button>
+                    </div>
+                `;
+            }
+        }
+    }
+    
+    renderPortMap(interfaces) {
+        const portMapContainer = document.getElementById('port-map');
+        if (!portMapContainer) return;
+        
+        if (!interfaces || interfaces.length === 0) {
+            portMapContainer.innerHTML = '<p class="text-center py-4 text-muted-foreground">No interfaces found</p>';
+            return;
+        }
+        
+        // Create a grid of ports
+        const portsHtml = interfaces.map(iface => {
+            const statusClass = iface.status === 'up' ? 'port-up' : iface.status === 'disabled' ? 'port-disabled' : 'port-down';
+            return `
+                <div class="port-indicator ${statusClass}" title="${iface.name}: ${iface.status} (${iface.description || 'No description'})">
+                    <div class="port-number">${iface.name.replace('1/1/', '')}</div>
+                    <div class="port-status-dot"></div>
+                </div>
+            `;
+        }).join('');
+        
+        portMapContainer.innerHTML = `
+            <div class="port-map-grid">
+                ${portsHtml}
+            </div>
+            <div class="port-legend mt-4">
+                <div class="legend-item">
+                    <div class="legend-dot port-up"></div>
+                    <span>Up</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot port-down"></div>
+                    <span>Down</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot port-disabled"></div>
+                    <span>Disabled</span>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Edit methods for VLANs and interfaces
     editVlan(vlanId) {
-        this.showAlert(`Edit VLAN ${vlanId} - Coming soon!`, 'info');
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        if (!selectedSwitch) {
+            this.showAlert('Please select a switch first', 'error');
+            return;
+        }
+        
+        // Create edit modal
+        const vlanName = prompt(`Enter new name for VLAN ${vlanId}:`);
+        if (vlanName === null) return; // User cancelled
+        
+        if (!vlanName.trim()) {
+            this.showAlert('VLAN name cannot be empty', 'error');
+            return;
+        }
+        
+        this.updateVlanOnSwitch(selectedSwitch, vlanId, { name: vlanName.trim() });
     }
     
     editInterface(interfaceName) {
-        this.showAlert(`Edit Interface ${interfaceName} - Coming soon!`, 'info');
+        const selectedSwitch = document.getElementById('manage-switch-selector').value;
+        if (!selectedSwitch) {
+            this.showAlert('Please select a switch first', 'error');
+            return;
+        }
+        
+        // Create edit modal
+        const description = prompt(`Enter description for interface ${interfaceName}:`);
+        if (description === null) return; // User cancelled
+        
+        this.updateInterfaceOnSwitch(selectedSwitch, interfaceName, { description: description });
+    }
+    
+    async updateVlanOnSwitch(switchIp, vlanId, updateData) {
+        try {
+            console.log(`Updating VLAN ${vlanId} on ${switchIp}:`, updateData);
+            this.showLoadingSpinner(`Updating VLAN ${vlanId}...`);
+            
+            const response = await fetch(`/api/switches/${switchIp}/vlans/${vlanId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(updateData)
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.showAlert(data.message || `VLAN ${vlanId} updated successfully`, 'success');
+                // Refresh the VLANs list
+                this.loadVlansForManage();
+            } else {
+                console.error('Failed to update VLAN:', data.error);
+                this.showAlert(`Failed to update VLAN: ${data.error}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error updating VLAN:', error);
+            this.showAlert('Error updating VLAN: ' + error.message, 'error');
+        } finally {
+            this.hideLoadingSpinner();
+        }
+    }
+    
+    async updateInterfaceOnSwitch(switchIp, interfaceName, updateData) {
+        try {
+            console.log(`Updating interface ${interfaceName} on ${switchIp}:`, updateData);
+            this.showLoadingSpinner(`Updating interface ${interfaceName}...`);
+            
+            const response = await fetch(`/api/switches/${switchIp}/interfaces/${encodeURIComponent(interfaceName)}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(updateData)
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.showAlert(data.message || `Interface ${interfaceName} updated successfully`, 'success');
+                // Refresh the interfaces list
+                this.loadInterfacesForManage();
+            } else {
+                console.error('Failed to update interface:', data.error);
+                this.showAlert(`Failed to update interface: ${data.error}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error updating interface:', error);
+            this.showAlert('Error updating interface: ' + error.message, 'error');
+        } finally {
+            this.hideLoadingSpinner();
+        }
     }
     
     formatTimestamp(timestamp) {

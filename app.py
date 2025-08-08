@@ -910,11 +910,11 @@ def get_switch_interfaces(switch_ip: str):
     """Get real interface data from the switch."""
     try:
         # Two-attempt authentication with session cleanup on failure
-        session = None
+        session_obj = None
         
         for attempt in range(2):
             try:
-                session = direct_rest_manager._authenticate(switch_ip)
+                session_obj = direct_rest_manager._authenticate(switch_ip)
                 logger.info(f"Authentication successful for interfaces on {switch_ip} on attempt {attempt + 1}")
                 break
             except Exception as auth_error:
@@ -925,20 +925,24 @@ def get_switch_interfaces(switch_ip: str):
                     time.sleep(1)
                 else:
                     logger.error(f"Interfaces authentication failed after 2 attempts for {switch_ip}")
-                    return jsonify({'error': f'Authentication failed: {str(auth_error)}'}), 401
+                    error_response = {'error': f'Authentication failed: {str(auth_error)}'}
+                    api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 401, str(error_response), 0)
+                    return jsonify(error_response), 401
         
-        if not session:
-            return jsonify({'error': 'Failed to authenticate to switch'}), 401
+        if not session_obj:
+            error_response = {'error': 'Failed to authenticate to switch'}
+            api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 401, str(error_response), 0)
+            return jsonify(error_response), 401
         
         # Get interfaces list
-        interfaces_response = session.get(
-            f"https://{switch_ip}/rest/v10.09/system/interfaces",
-            timeout=10,
-            verify=Config.SSL_VERIFY
-        )
+        interfaces_url = f"https://{switch_ip}/rest/v10.09/system/interfaces"
+        interfaces_response = session_obj.get(interfaces_url, timeout=10, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', interfaces_url, {}, None, interfaces_response.status_code, interfaces_response.text, 0)
         
         if interfaces_response.status_code != 200:
-            return jsonify({'error': 'Failed to get interfaces'}), 500
+            error_response = {'error': f'Failed to get interfaces: {interfaces_response.status_code}'}
+            api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 500, str(error_response), 0)
+            return jsonify(error_response), 500
             
         interfaces_list = interfaces_response.json()
         interfaces_data = []
@@ -952,11 +956,9 @@ def get_switch_interfaces(switch_ip: str):
             try:
                 # URL encode the interface name for the API call
                 encoded_name = interface_name.replace('/', '%2F')
-                interface_response = session.get(
-                    f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}",
-                    timeout=5,
-                    verify=Config.SSL_VERIFY
-                )
+                interface_detail_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}"
+                interface_response = session_obj.get(interface_detail_url, timeout=5, verify=Config.SSL_VERIFY)
+                api_logger.log_api_call('GET', interface_detail_url, {}, None, interface_response.status_code, interface_response.text, 0)
                 
                 if interface_response.status_code == 200:
                     interface_data = interface_response.json()
@@ -982,6 +984,16 @@ def get_switch_interfaces(switch_ip: str):
                         'description': interface_data.get('description', '') or '',
                         'mtu': interface_data.get('mtu', 0)
                     })
+                else:
+                    logger.warning(f"Failed to get interface {interface_name} details: {interface_response.status_code}")
+                    interfaces_data.append({
+                        'name': interface_name,
+                        'admin_state': 'unknown',
+                        'link_state': 'unknown',
+                        'status': 'unknown',
+                        'description': '',
+                        'mtu': 0
+                    })
             except Exception as e:
                 logger.warning(f"Error getting interface {interface_name} details: {e}")
                 # Add basic interface info even if details fail
@@ -990,7 +1002,8 @@ def get_switch_interfaces(switch_ip: str):
                     'admin_state': 'unknown',
                     'link_state': 'unknown',
                     'status': 'unknown',
-                    'description': ''
+                    'description': '',
+                    'mtu': 0
                 })
         
         # Sort by interface name
