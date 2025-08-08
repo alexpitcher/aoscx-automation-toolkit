@@ -18,12 +18,128 @@ from core.exceptions import (
 )
 from core.api_logger import api_logger
 
+# Capability cache for switch-specific features
+capability_cache = {}
+CAPABILITY_CACHE_TTL = 60  # seconds
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def capabilities_for(switch_ip: str, session_obj=None) -> Dict[str, Any]:
+    """Get cached capabilities for a switch or detect them."""
+    current_time = time.time()
+    
+    # Check cache first
+    if switch_ip in capability_cache:
+        cached = capability_cache[switch_ip]
+        if current_time - cached['timestamp'] < CAPABILITY_CACHE_TTL:
+            return cached['capabilities']
+    
+    # Need to detect capabilities
+    if not session_obj:
+        try:
+            session_obj = direct_rest_manager._authenticate(switch_ip)
+        except Exception as e:
+            logger.warning(f"Failed to authenticate for capability detection on {switch_ip}: {e}")
+            # Return conservative defaults
+            return {
+                'poe_supported': False,
+                'cpu_supported': False,
+                'expected_psu_slots': 1,
+                'expected_fan_zones': 1
+            }
+    
+    capabilities = detect_switch_capabilities(switch_ip, session_obj)
+    
+    # Cache the result
+    capability_cache[switch_ip] = {
+        'capabilities': capabilities,
+        'timestamp': current_time
+    }
+    
+    return capabilities
+
+def detect_switch_capabilities(switch_ip: str, session_obj) -> Dict[str, Any]:
+    """Detect switch capabilities through endpoint probing."""
+    capabilities = {
+        'poe_supported': False,
+        'cpu_supported': False,
+        'expected_psu_slots': 1,
+        'expected_fan_zones': 1
+    }
+    
+    # Test PoE support
+    try:
+        poe_url = f"https://{switch_ip}/rest/v10.09/system/poe"
+        poe_response = session_obj.get(poe_url, timeout=5, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
+        
+        if poe_response.status_code == 200:
+            capabilities['poe_supported'] = True
+        elif poe_response.status_code in [400, 404]:
+            capabilities['poe_supported'] = False
+        else:
+            # Uncertain - assume not supported
+            capabilities['poe_supported'] = False
+            
+    except Exception as e:
+        logger.debug(f"PoE capability probe failed for {switch_ip}: {e}")
+        capabilities['poe_supported'] = False
+    
+    # Test CPU support - try multiple endpoints
+    cpu_endpoints = [
+        f"https://{switch_ip}/rest/v10.09/system/metrics/cpu",
+        f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/management_module",
+        f"https://{switch_ip}/rest/v10.09/system/health",
+        f"https://{switch_ip}/rest/v10.09/system/monitoring"
+    ]
+    
+    for cpu_url in cpu_endpoints:
+        try:
+            cpu_response = session_obj.get(cpu_url, timeout=5, verify=Config.SSL_VERIFY)
+            api_logger.log_api_call('GET', cpu_url, {}, None, cpu_response.status_code, cpu_response.text, 0)
+            
+            if cpu_response.status_code == 200:
+                # Check if response contains CPU utilization data
+                try:
+                    data = cpu_response.json()
+                    if any(key in str(data).lower() for key in ['cpu', 'utilization', 'usage']):
+                        capabilities['cpu_supported'] = True
+                        # Store the working endpoint for future use
+                        capabilities['cpu_endpoint'] = cpu_url
+                        break
+                except:
+                    continue
+                    
+        except Exception as e:
+            logger.debug(f"CPU probe failed for {switch_ip} at {cpu_url}: {e}")
+            continue
+    
+    # Try to detect PSU slots and fan zones from system info
+    try:
+        system_url = f"https://{switch_ip}/rest/v10.09/system"
+        system_response = session_obj.get(system_url, timeout=10, verify=Config.SSL_VERIFY)
+        if system_response.status_code == 200:
+            system_data = system_response.json()
+            platform_name = system_data.get('platform_name', '').lower()
+            
+            # Infer expected slots based on platform (conservative approach)
+            if any(model in platform_name for model in ['6300', '6400', '8320', '8325']):
+                capabilities['expected_psu_slots'] = 2
+                capabilities['expected_fan_zones'] = 3
+            else:
+                capabilities['expected_psu_slots'] = 1
+                capabilities['expected_fan_zones'] = 1
+                
+    except Exception as e:
+        logger.debug(f"System info probe failed for {switch_ip}: {e}")
+    
+    logger.info(f"Detected capabilities for {switch_ip}: {capabilities}")
+    return capabilities
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -653,6 +769,80 @@ def export_api_logs():
         logger.error(f"Error exporting API logs: {e}")
         return jsonify({'error': f'Error exporting logs: {str(e)}'}), 500
 
+def normalize_status(raw_status: str) -> str:
+    """Normalize raw status strings to consistent values."""
+    if not raw_status:
+        return "unknown"
+    
+    status_lower = str(raw_status).lower().strip()
+    
+    # Map specific known good statuses first (more specific)
+    if status_lower in ["ok", "good", "normal", "up", "online", "operational", "active", "running"]:
+        return "ok"
+    # Map specific fault patterns (be more specific about faults)
+    elif any(fault in status_lower for fault in ["fault_", "error_", "failed", "critical"]):
+        return "error"
+    elif any(warn in status_lower for warn in ["warning_", "alert_", "degraded"]):
+        return "warning"
+    # If we just get a simple status without underscore, it's likely OK
+    elif status_lower in ["normal", "ready", "present", "enabled"]:
+        return "ok"
+    else:
+        # Default to unknown for unrecognized statuses rather than assuming error
+        return "unknown"
+
+def get_cpu_usage(switch_ip: str, session_obj, capabilities: Dict[str, Any]) -> tuple:
+    """Get CPU usage percentage and status."""
+    if not capabilities.get('cpu_supported', False):
+        return None, "na"
+    
+    # Use the discovered CPU endpoint if available
+    cpu_endpoint = capabilities.get('cpu_endpoint')
+    if not cpu_endpoint:
+        return None, "na"
+    
+    try:
+        cpu_response = session_obj.get(cpu_endpoint, timeout=5, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', cpu_endpoint, {}, None, cpu_response.status_code, cpu_response.text, 0)
+        
+        if cpu_response.status_code == 200:
+            cpu_data = cpu_response.json()
+            
+            # Try to extract CPU percentage from various possible fields
+            cpu_percentage = None
+            
+            # Try direct fields first
+            for field in ['cpu_utilization', 'utilization', 'usage_percent', 'cpu_usage']:
+                if field in cpu_data:
+                    cpu_percentage = cpu_data[field]
+                    break
+            
+            # If not found, look deeper in nested structures
+            if cpu_percentage is None and isinstance(cpu_data, dict):
+                for key, value in cpu_data.items():
+                    if isinstance(value, dict):
+                        for subkey, subvalue in value.items():
+                            if any(cpu_key in subkey.lower() for cpu_key in ['cpu', 'utilization']):
+                                if isinstance(subvalue, (int, float)):
+                                    cpu_percentage = subvalue
+                                    break
+                        if cpu_percentage is not None:
+                            break
+            
+            if cpu_percentage is not None:
+                cpu_percentage = int(float(cpu_percentage))
+                if cpu_percentage > 90:
+                    return cpu_percentage, "error"
+                elif cpu_percentage > 75:
+                    return cpu_percentage, "warning"
+                else:
+                    return cpu_percentage, "ok"
+                    
+    except Exception as e:
+        logger.debug(f"Error getting CPU usage for {switch_ip}: {e}")
+    
+    return None, "na"
+
 @app.route('/api/switches/<switch_ip>/overview')
 def get_switch_overview(switch_ip: str):
     """Get real switch overview data including model, ports, PoE, power, fans, CPU."""
@@ -680,6 +870,9 @@ def get_switch_overview(switch_ip: str):
         if not session_obj:
             return jsonify({'error': 'Failed to authenticate to switch'}), 401
         
+        # Get switch capabilities (reuse existing session)
+        capabilities = capabilities_for(switch_ip, session_obj)
+        
         # Get system information  
         system_response = session_obj.get(
             f"https://{switch_ip}/rest/v10.09/system",
@@ -693,8 +886,11 @@ def get_switch_overview(switch_ip: str):
         system_data = system_response.json()
         api_logger.log_api_call('GET', f"https://{switch_ip}/rest/v10.09/system", {}, None, system_response.status_code, system_response.text, 0)
         
-        # Get power supplies status
+        # Get power supplies status and health info
         power_status = "unknown"
+        power_supplies_info = []
+        expected_psu_slots = capabilities.get('expected_psu_slots', 1)
+        
         try:
             power_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/power_supplies"
             power_response = session_obj.get(power_url, timeout=5, verify=Config.SSL_VERIFY)
@@ -703,20 +899,42 @@ def get_switch_overview(switch_ip: str):
             if power_response.status_code == 200:
                 power_supplies = power_response.json()
                 if power_supplies:
-                    # Check first power supply
-                    first_ps = list(power_supplies.keys())[0]
-                    ps_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/power_supplies/{first_ps.replace('/', '%2F')}"
-                    ps_response = session_obj.get(ps_url, timeout=5, verify=Config.SSL_VERIFY)
-                    api_logger.log_api_call('GET', ps_url, {}, None, ps_response.status_code, ps_response.text, 0)
+                    psu_statuses = []
+                    for psu_key in power_supplies.keys():
+                        try:
+                            ps_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/power_supplies/{psu_key.replace('/', '%2F')}"
+                            ps_response = session_obj.get(ps_url, timeout=5, verify=Config.SSL_VERIFY)
+                            api_logger.log_api_call('GET', ps_url, {}, None, ps_response.status_code, ps_response.text, 0)
+                            
+                            if ps_response.status_code == 200:
+                                ps_data = ps_response.json()
+                                raw_status = ps_data.get('status', 'unknown')
+                                normalized_status = normalize_status(raw_status)
+                                psu_statuses.append(normalized_status)
+                                power_supplies_info.append({
+                                    'slot': psu_key,
+                                    'status': normalized_status,
+                                    'raw_status': raw_status
+                                })
+                        except Exception as e:
+                            logger.debug(f"Error getting PSU {psu_key} status: {e}")
                     
-                    if ps_response.status_code == 200:
-                        ps_data = ps_response.json()
-                        power_status = ps_data.get('status', 'unknown')
+                    # Determine overall power status
+                    if any(status == "error" for status in psu_statuses):
+                        power_status = "error"
+                    elif any(status == "warning" for status in psu_statuses):
+                        power_status = "warning"
+                    elif all(status == "ok" for status in psu_statuses):
+                        power_status = "ok"
+                    else:
+                        power_status = "unknown"
         except Exception as e:
             logger.debug(f"Error getting power status: {e}")
         
         # Get fan status
         fan_status = "unknown"
+        fans_info = []
+        
         try:
             fans_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/fans"
             fans_response = session_obj.get(fans_url, timeout=5, verify=Config.SSL_VERIFY)
@@ -725,8 +943,35 @@ def get_switch_overview(switch_ip: str):
             if fans_response.status_code == 200:
                 fans = fans_response.json()
                 if fans:
-                    # Assume fans are OK if we can get the data
-                    fan_status = "ok"
+                    fan_statuses = []
+                    for fan_key in fans.keys():
+                        try:
+                            fan_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/fans/{fan_key.replace('/', '%2F')}"
+                            fan_response = session_obj.get(fan_url, timeout=5, verify=Config.SSL_VERIFY)
+                            api_logger.log_api_call('GET', fan_url, {}, None, fan_response.status_code, fan_response.text, 0)
+                            
+                            if fan_response.status_code == 200:
+                                fan_data = fan_response.json()
+                                raw_status = fan_data.get('status', 'unknown')
+                                normalized_status = normalize_status(raw_status)
+                                fan_statuses.append(normalized_status)
+                                fans_info.append({
+                                    'slot': fan_key,
+                                    'status': normalized_status,
+                                    'raw_status': raw_status
+                                })
+                        except Exception as e:
+                            logger.debug(f"Error getting fan {fan_key} status: {e}")
+                    
+                    # Determine overall fan status
+                    if any(status == "error" for status in fan_statuses):
+                        fan_status = "error"
+                    elif any(status == "warning" for status in fan_statuses):
+                        fan_status = "warning"
+                    elif all(status == "ok" for status in fan_statuses):
+                        fan_status = "ok"
+                    else:
+                        fan_status = "unknown"
         except Exception as e:
             logger.debug(f"Error getting fan status: {e}")
             
@@ -745,49 +990,80 @@ def get_switch_overview(switch_ip: str):
         except Exception as e:
             logger.debug(f"Error getting interface count: {e}")
         
-        # Try to get CPU usage from metrics
-        cpu_usage = 0
-        try:
-            cpu_url = f"https://{switch_ip}/rest/v10.09/system/metrics/cpu"
-            cpu_response = session_obj.get(cpu_url, timeout=5, verify=Config.SSL_VERIFY)
-            api_logger.log_api_call('GET', cpu_url, {}, None, cpu_response.status_code, cpu_response.text, 0)
-            
-            if cpu_response.status_code == 200:
-                cpu_data = cpu_response.json()
-                # Try to extract CPU usage percentage from response
-                cpu_usage = cpu_data.get('cpu_utilization', 0)
-                if not cpu_usage:
-                    # If no direct field, try other common patterns
-                    cpu_usage = cpu_data.get('utilization', 0)
-        except Exception as e:
-            logger.debug(f"Error getting CPU metrics: {e}")
-            # Fallback to mock CPU usage (5-45%)
-            import random
-            cpu_usage = random.randint(5, 45)
+        # Get CPU usage using capabilities
+        cpu_usage, cpu_status = get_cpu_usage(switch_ip, session_obj, capabilities)
         
-        # Try to get PoE status
-        poe_status = "unknown"
-        try:
-            poe_url = f"https://{switch_ip}/rest/v10.09/system/poe"
-            poe_response = session_obj.get(poe_url, timeout=5, verify=Config.SSL_VERIFY)
-            api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
-            
-            if poe_response.status_code == 200:
-                poe_data = poe_response.json()
-                if poe_data:
-                    poe_status = "online"
-                else:
-                    poe_status = "not_supported"
-            elif poe_response.status_code == 404:
-                poe_status = "not_supported"
-        except Exception as e:
-            logger.debug(f"Error getting PoE status: {e}")
-            poe_status = "not_supported"
+        # Get PoE status using capabilities
+        if capabilities.get('poe_supported', False):
+            poe_status = "unknown"
+            try:
+                poe_url = f"https://{switch_ip}/rest/v10.09/system/poe"
+                poe_response = session_obj.get(poe_url, timeout=5, verify=Config.SSL_VERIFY)
+                api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
+                
+                if poe_response.status_code == 200:
+                    poe_data = poe_response.json()
+                    # Check for any PoE-related status information
+                    if isinstance(poe_data, dict):
+                        # Look for status fields in PoE data
+                        if 'status' in poe_data:
+                            poe_status = normalize_status(poe_data['status'])
+                        else:
+                            poe_status = "ok"  # PoE endpoint accessible means PoE is functional
+                    else:
+                        poe_status = "ok"
+            except Exception as e:
+                logger.debug(f"Error getting PoE status: {e}")
+                poe_status = "unknown"
+        else:
+            poe_status = "na"
         
         # Get model information
         platform_name = system_data.get('platform_name', 'Unknown')
         hostname = system_data.get('applied_hostname', 'Unknown')
         firmware_version = system_data.get('firmware_version', 'Unknown')
+        
+        # Calculate health status
+        health_status = "ONLINE"
+        health_reasons = []
+        
+        # Check for specific PSU errors
+        psu_errors = [psu for psu in power_supplies_info if psu['status'] == 'error']
+        psu_warnings = [psu for psu in power_supplies_info if psu['status'] == 'warning']
+        
+        # Check for specific fan errors
+        fan_errors = [fan for fan in fans_info if fan['status'] == 'error']
+        fan_warnings = [fan for fan in fans_info if fan['status'] == 'warning']
+        
+        # Check for errors
+        if psu_errors:
+            health_status = "ERRORS"
+            for psu in psu_errors:
+                health_reasons.append(f"PSU {psu['slot']}: {psu['raw_status']}")
+        elif fan_errors:
+            health_status = "ERRORS"
+            for fan in fan_errors:
+                health_reasons.append(f"Fan {fan['slot']}: {fan['raw_status']}")
+        elif cpu_status == "error":
+            health_status = "ERRORS" 
+            health_reasons.append("CPU utilization critically high")
+            
+        # Check for degraded conditions
+        elif health_status == "ONLINE":  # Only if no errors
+            if len(power_supplies_info) < expected_psu_slots:
+                health_status = "DEGRADED"
+                health_reasons.append(f"Only {len(power_supplies_info)} of {expected_psu_slots} PSU present")
+            elif psu_warnings:
+                health_status = "DEGRADED"
+                for psu in psu_warnings:
+                    health_reasons.append(f"PSU {psu['slot']} warning: {psu['raw_status']}")
+            elif fan_warnings:
+                health_status = "DEGRADED"
+                for fan in fan_warnings:
+                    health_reasons.append(f"Fan {fan['slot']} warning: {fan['raw_status']}")
+            elif cpu_status == "warning":
+                health_status = "DEGRADED"
+                health_reasons.append("CPU utilization high")
         
         overview_data = {
             'model': f"Aruba CX {platform_name}",
@@ -797,7 +1073,12 @@ def get_switch_overview(switch_ip: str):
             'poe_status': poe_status,
             'power_status': power_status,
             'fan_status': fan_status,
+            'cpu_status': cpu_status,
             'cpu_usage': cpu_usage,
+            'health': {
+                'status': health_status,
+                'reasons': health_reasons[:3]  # Limit to first 3 reasons
+            },
             'uptime': system_data.get('boot_time', 0),
             'management_ip': system_data.get('mgmt_intf_status', {}).get('ip', switch_ip)
         }

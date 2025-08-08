@@ -7,9 +7,13 @@ class MobileDashboard {
     constructor() {
         this.switches = new Map();
         this.currentSwitch = null;
+        this.selectedSwitch = null;
         this.activeTab = 'dashboard';
         this.lastRefresh = new Date();
         this.isLoading = false;
+        this.interfacesReqToken = 0;
+        this.portMapReqToken = 0;
+        this.changeBound = false;
         this.init();
     }
 
@@ -1168,11 +1172,26 @@ class MobileDashboard {
         retryBanner.innerHTML = `
             <div class="alert alert-warning" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
                 <span>${message}</span>
-                <button class="btn btn-primary btn-sm retry-btn" onclick="this.closest('.retry-banner').remove(); (${retryCallback.toString()})()">
+                <button class="btn btn-primary btn-sm retry-btn">
                     Retry
                 </button>
             </div>
         `;
+        
+        // Add proper event listener to retry button
+        const retryBtn = retryBanner.querySelector('.retry-btn');
+        if (retryBtn && retryCallback) {
+            retryBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                retryBanner.remove();
+                try {
+                    retryCallback.call(this);
+                } catch (error) {
+                    console.error('Error in retry callback:', error);
+                    this.showAlert('Error retrying operation: ' + error.message, 'error');
+                }
+            });
+        }
         
         // Insert at the top of the section
         section.insertBefore(retryBanner, section.firstChild);
@@ -1491,7 +1510,9 @@ class MobileDashboard {
                     poeStatus: data.poe_status || 'unknown',
                     powerStatus: data.power_status || 'unknown',
                     fanStatus: data.fan_status || 'unknown',
-                    cpuUsage: data.cpu_usage || 0
+                    cpuUsage: data.cpu_usage,
+                    cpuStatus: data.cpu_status || 'unknown',
+                    health: data.health
                 });
             } else {
                 console.error('Failed to load device overview:', data.error);
@@ -1523,10 +1544,9 @@ class MobileDashboard {
         const elements = {
             'device-model': info.model || '--',
             'device-ports': info.portCount || '--',
-            'poe-status': info.poeStatus || '--',
-            'power-status': info.powerStatus || '--',
-            'fan-status': info.fanStatus || '--',
-            'cpu-text': info.cpuUsage ? `${info.cpuUsage}%` : '0%'
+            'poe-status': this.formatPoEStatus(info.poeStatus),
+            'power-status': this.formatStatus(info.powerStatus),
+            'fan-status': this.formatStatus(info.fanStatus)
         };
         
         Object.entries(elements).forEach(([id, value]) => {
@@ -1537,22 +1557,111 @@ class MobileDashboard {
                 // Add status classes
                 if (id.includes('status')) {
                     element.className = 'info-value status-indicator';
-                    if (value === 'online') {
+                    const status = id === 'poe-status' ? info.poeStatus : 
+                                  id === 'power-status' ? info.powerStatus :
+                                  id === 'fan-status' ? info.fanStatus : 'unknown';
+                    
+                    if (status === 'ok') {
                         element.classList.add('online');
-                    } else if (value === 'offline') {
+                    } else if (status === 'error') {
                         element.classList.add('offline');
-                    } else if (value === 'warning') {
+                    } else if (status === 'warning') {
                         element.classList.add('warning');
+                    } else if (status === 'na') {
+                        element.classList.add('na');
                     }
                 }
             }
         });
         
-        // Update CPU bar
+        // Update health status badge
+        this.updateHealthBadge(info.health);
+        
+        // Update CPU usage display
+        this.updateCPUDisplay(info.cpuUsage, info.cpuStatus);
+    }
+    
+    formatPoEStatus(status) {
+        if (status === 'na') return 'N/A';
+        if (status === 'ok') return 'Online';
+        if (status === 'error') return 'Error';
+        if (status === 'warning') return 'Warning';
+        return 'Unknown';
+    }
+    
+    formatStatus(status) {
+        if (status === 'na') return 'N/A';
+        if (status === 'ok') return 'OK';
+        if (status === 'error') return 'Error';
+        if (status === 'warning') return 'Warning';
+        return 'Unknown';
+    }
+    
+    updateHealthBadge(health) {
+        const healthBadge = document.getElementById('device-health-badge');
+        const healthReasons = document.getElementById('device-health-reasons');
+        
+        if (!healthBadge) return;
+        
+        // Clear existing classes
+        healthBadge.classList.remove('badge-success', 'badge-warning', 'badge-error');
+        
+        if (!health) {
+            healthBadge.textContent = 'Unknown';
+            healthBadge.classList.add('badge-secondary');
+            if (healthReasons) healthReasons.textContent = '';
+            return;
+        }
+        
+        // Set badge text and color
+        healthBadge.textContent = health.status;
+        
+        if (health.status === 'ONLINE') {
+            healthBadge.classList.add('badge-success');
+        } else if (health.status === 'DEGRADED') {
+            healthBadge.classList.add('badge-warning');
+        } else if (health.status === 'ERRORS') {
+            healthBadge.classList.add('badge-error');
+        }
+        
+        // Update reasons
+        if (healthReasons) {
+            if (health.reasons && health.reasons.length > 0) {
+                const displayReasons = health.reasons.slice(0, 3);
+                const moreCount = health.reasons.length - 3;
+                let reasonsText = displayReasons.join(', ');
+                if (moreCount > 0) {
+                    reasonsText += `, +${moreCount} more`;
+                }
+                healthReasons.textContent = reasonsText;
+            } else {
+                healthReasons.textContent = '';
+            }
+        }
+    }
+    
+    updateCPUDisplay(usage, status) {
         const cpuBar = document.getElementById('cpu-bar');
-        if (cpuBar && info.cpuUsage) {
-            cpuBar.style.setProperty('--cpu-width', `${info.cpuUsage}%`);
-            cpuBar.style.background = `linear-gradient(90deg, transparent ${info.cpuUsage}%, var(--muted) ${info.cpuUsage}%)`;
+        const cpuText = document.getElementById('cpu-text');
+        
+        if (status === 'na' || usage === null || usage === undefined) {
+            // CPU not supported
+            if (cpuBar) cpuBar.style.display = 'none';
+            if (cpuText) cpuText.textContent = 'N/A';
+        } else {
+            // CPU supported, show actual usage
+            if (cpuBar) {
+                cpuBar.style.display = 'block';
+                cpuBar.style.setProperty('--cpu-width', `${usage}%`);
+                
+                // Color based on usage level
+                let color = 'var(--success)';
+                if (usage > 90) color = 'var(--destructive)';
+                else if (usage > 75) color = 'var(--warning)';
+                
+                cpuBar.style.background = `linear-gradient(90deg, ${color} ${usage}%, var(--muted) ${usage}%)`;
+            }
+            if (cpuText) cpuText.textContent = `${usage}%`;
         }
     }
     
@@ -1614,35 +1723,81 @@ class MobileDashboard {
         `).join('');
     }
     
+    parseIfName(ifname) {
+        // Parse interface name like "1/1/10" -> [1,1,10] for natural sorting
+        const parts = ifname.replace(/^.*?(\d+\/\d+\/\d+).*$/, '$1').split('/');
+        return parts.length === 3 ? parts.map(Number) : [0, 0, 0];
+    }
+    
+    normalizeInterface(iface) {
+        // Normalize interface objects to common shape
+        return {
+            name: iface.name,
+            admin_state: iface.admin_state || 'unknown',
+            link_state: iface.link_state || 'unknown',
+            link_speed: iface.link_speed || iface.speed || 0,
+            type: iface.type || 'unknown',
+            description: iface.description || '',
+            mtu: iface.mtu || 0,
+            status: iface.status || (iface.admin_state === 'up' && iface.link_state === 'up' ? 'up' : 
+                    iface.admin_state === 'down' ? 'disabled' : 'down')
+        };
+    }
+    
     async loadInterfacesForManage() {
         const selectedSwitch = document.getElementById('manage-switch-selector').value;
         if (!selectedSwitch) {
             this.updateInterfacesList([]);
-            this.updatePortMap([]);
             return;
         }
         
+        // Increment token for race protection
+        const currentToken = ++this.interfacesReqToken;
+        
         try {
-            console.log(`Loading interfaces for ${selectedSwitch}`);
+            console.log(`Loading interfaces for ${selectedSwitch} (token: ${currentToken})`);
             
             const response = await fetch(`/api/switches/${selectedSwitch}/interfaces`);
             const data = await response.json();
             
+            // Check if this response is still relevant
+            if (currentToken !== this.interfacesReqToken) {
+                console.log(`Discarding stale interfaces response (token: ${currentToken})`);
+                return;
+            }
+            
             if (response.ok) {
                 console.log('Interfaces data:', data);
-                this.updateInterfacesList(data.interfaces || []);
-                this.updatePortMap(data.interfaces || []);
+                let interfaces = (data.interfaces || []).map(iface => this.normalizeInterface(iface));
+                
+                // Sort interfaces naturally
+                interfaces.sort((a, b) => {
+                    const partsA = this.parseIfName(a.name);
+                    const partsB = this.parseIfName(b.name);
+                    
+                    for (let i = 0; i < 3; i++) {
+                        if (partsA[i] !== partsB[i]) {
+                            return partsA[i] - partsB[i];
+                        }
+                    }
+                    return a.name.localeCompare(b.name);
+                });
+                
+                this.updateInterfacesList(interfaces);
             } else {
                 console.error('Failed to load interfaces:', data.error);
                 this.showRetryButton('interfaces-section', 'Failed to load interfaces. ', () => this.loadInterfacesForManage());
                 this.updateInterfacesList([]);
-                this.updatePortMap([]);
             }
         } catch (error) {
+            // Check if this response is still relevant
+            if (currentToken !== this.interfacesReqToken) {
+                return;
+            }
+            
             console.error('Error loading interfaces:', error);
             this.showRetryButton('interfaces-section', 'Network error loading interfaces. ', () => this.loadInterfacesForManage());
             this.updateInterfacesList([]);
-            this.updatePortMap([]);
         }
     }
     
@@ -1746,9 +1901,11 @@ class MobileDashboard {
             selector.innerHTML = '<option value="">Error loading switches</option>';
         }
         
-        // Add event listener for switch change
-        selector.removeEventListener('change', this.handleManageSwitchChange);
-        selector.addEventListener('change', this.handleManageSwitchChange.bind(this));
+        // Add event listener for switch change (ensure single binding)
+        if (!this.changeBound) {
+            selector.addEventListener('change', this.handleManageSwitchChange.bind(this));
+            this.changeBound = true;
+        }
     }
     
     handleManageSwitchChange(event) {
@@ -1757,11 +1914,11 @@ class MobileDashboard {
         this.currentSwitch = selectedSwitch; // Keep for backward compatibility
         
         if (selectedSwitch) {
-            // Load all manage section data for the selected switch
+            // Load all manage section data for the selected switch with slight delays to avoid session conflicts
             this.loadDeviceOverview();
-            this.loadVlansForManage();
-            this.loadInterfacesForManage();
-            this.loadPortMap();
+            setTimeout(() => this.loadVlansForManage(), 100);
+            setTimeout(() => this.loadInterfacesForManage(), 200);
+            setTimeout(() => this.loadPortMap(), 300);
         } else {
             // Clear sections if no switch selected
             this.clearManageSections();
@@ -1805,39 +1962,66 @@ class MobileDashboard {
             return;
         }
         
+        // Increment token for race protection
+        const currentToken = ++this.portMapReqToken;
+        
         if (portMapContainer) {
             portMapContainer.innerHTML = '<div class="text-center py-4"><div class="inline-flex items-center gap-2"><div class="loading-spinner"></div>Loading port map...</div></div>';
         }
         
         try {
-            console.log(`Loading port map for ${selectedSwitch}`);
+            console.log(`Loading port map for ${selectedSwitch} (token: ${currentToken})`);
             
             const response = await fetch(`/api/switches/${selectedSwitch}/interfaces`);
             const data = await response.json();
             
+            // Check if this response is still relevant
+            if (currentToken !== this.portMapReqToken) {
+                console.log(`Discarding stale port map response (token: ${currentToken})`);
+                return;
+            }
+            
             if (response.ok && data.interfaces) {
-                this.renderPortMap(data.interfaces);
+                let interfaces = (data.interfaces || []).map(iface => this.normalizeInterface(iface));
+                
+                // Sort interfaces naturally
+                interfaces.sort((a, b) => {
+                    const partsA = this.parseIfName(a.name);
+                    const partsB = this.parseIfName(b.name);
+                    
+                    for (let i = 0; i < 3; i++) {
+                        if (partsA[i] !== partsB[i]) {
+                            return partsA[i] - partsB[i];
+                        }
+                    }
+                    return a.name.localeCompare(b.name);
+                });
+                
+                this.renderPortMap(interfaces);
             } else {
                 console.error('Failed to load port map:', data.error);
-                if (portMapContainer) {
-                    portMapContainer.innerHTML = `
-                        <div class="text-center py-4 text-destructive">
-                            <p>Failed to load port map</p>
-                            <button class="retry-btn mt-2" onclick="dashboard.loadPortMap()">Retry</button>
-                        </div>
-                    `;
-                }
+                this.showPortMapError('Failed to load port map');
             }
         } catch (error) {
-            console.error('Error loading port map:', error);
-            if (portMapContainer) {
-                portMapContainer.innerHTML = `
-                    <div class="text-center py-4 text-destructive">
-                        <p>Network error loading port map</p>
-                        <button class="retry-btn mt-2" onclick="dashboard.loadPortMap()">Retry</button>
-                    </div>
-                `;
+            // Check if this response is still relevant
+            if (currentToken !== this.portMapReqToken) {
+                return;
             }
+            
+            console.error('Error loading port map:', error);
+            this.showPortMapError('Network error loading port map');
+        }
+    }
+    
+    showPortMapError(message) {
+        const portMapContainer = document.getElementById('port-map');
+        if (portMapContainer) {
+            portMapContainer.innerHTML = `
+                <div class="text-center py-4 text-destructive">
+                    <p>${message}</p>
+                    <button class="retry-btn mt-2" onclick="dashboard.loadPortMap()">Retry</button>
+                </div>
+            `;
         }
     }
     
@@ -1845,75 +2029,199 @@ class MobileDashboard {
         const portMapContainer = document.getElementById('port-map');
         if (!portMapContainer) return;
         
+        // Clear container first to avoid duplicates
+        portMapContainer.innerHTML = '';
+        
         if (!interfaces || interfaces.length === 0) {
             portMapContainer.innerHTML = '<p class="text-center py-4 text-muted-foreground">No interfaces found</p>';
             return;
         }
         
-        // Create a grid of ports
-        const portsHtml = interfaces.map(iface => {
-            const statusClass = iface.status === 'up' ? 'port-up' : iface.status === 'disabled' ? 'port-disabled' : 'port-down';
-            return `
-                <div class="port-indicator ${statusClass}" title="${iface.name}: ${iface.status} (${iface.description || 'No description'})">
-                    <div class="port-number">${iface.name.replace('1/1/', '')}</div>
-                    <div class="port-status-dot"></div>
+        try {
+            // Create a grid of ports with delegated event handling
+            const portsHtml = interfaces.map(iface => {
+                const statusClass = iface.status === 'up' ? 'port-up' : iface.status === 'disabled' ? 'port-disabled' : 'port-down';
+                return `
+                    <div class="port-indicator ${statusClass}" 
+                         data-interface="${iface.name}" 
+                         title="${iface.name}: ${iface.status} (${iface.description || 'No description'})">
+                        <div class="port-number">${iface.name.replace('1/1/', '')}</div>
+                        <div class="port-status-dot"></div>
+                    </div>
+                `;
+            }).join('');
+            
+            portMapContainer.innerHTML = `
+                <div class="port-map-grid" id="port-map-grid">
+                    ${portsHtml}
+                </div>
+                <div class="port-legend mt-4">
+                    <div class="legend-item">
+                        <div class="legend-dot port-up"></div>
+                        <span>Up</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot port-down"></div>
+                        <span>Down</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot port-disabled"></div>
+                        <span>Disabled</span>
+                    </div>
                 </div>
             `;
-        }).join('');
-        
-        portMapContainer.innerHTML = `
-            <div class="port-map-grid">
-                ${portsHtml}
-            </div>
-            <div class="port-legend mt-4">
-                <div class="legend-item">
-                    <div class="legend-dot port-up"></div>
-                    <span>Up</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-dot port-down"></div>
-                    <span>Down</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-dot port-disabled"></div>
-                    <span>Disabled</span>
-                </div>
-            </div>
-        `;
+            
+            // Setup delegated click handler for port indicators
+            const gridContainer = document.getElementById('port-map-grid');
+            if (gridContainer) {
+                gridContainer.addEventListener('click', (e) => {
+                    const portIndicator = e.target.closest('.port-indicator');
+                    if (portIndicator && this.selectedSwitch) {
+                        const interfaceName = portIndicator.dataset.interface;
+                        if (interfaceName) {
+                            this.editInterface(interfaceName);
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Error rendering port map:', error);
+            this.showPortMapError('Error displaying port map');
+        }
     }
     
     // Edit methods for VLANs and interfaces
     editVlan(vlanId) {
-        const selectedSwitch = document.getElementById('manage-switch-selector').value;
-        if (!selectedSwitch) {
+        if (!this.selectedSwitch) {
             this.showAlert('Please select a switch first', 'error');
             return;
         }
         
-        // Create edit modal
-        const vlanName = prompt(`Enter new name for VLAN ${vlanId}:`);
-        if (vlanName === null) return; // User cancelled
+        this.showVlanEditModal(vlanId);
+    }
+    
+    showVlanEditModal(vlanId) {
+        // Find current VLAN data
+        const vlansList = document.getElementById('vlans-list');
+        let currentVlan = { id: vlanId, name: '', description: '', admin_state: 'up' };
         
-        if (!vlanName.trim()) {
-            this.showAlert('VLAN name cannot be empty', 'error');
+        // Try to extract current values from the DOM or cache
+        if (vlansList) {
+            const vlanItems = vlansList.querySelectorAll('.vlan-item');
+            vlanItems.forEach(item => {
+                const nameEl = item.querySelector('.vlan-name');
+                const idEl = item.querySelector('.vlan-id');
+                if (idEl && nameEl && idEl.textContent.includes(vlanId.toString())) {
+                    currentVlan.name = nameEl.textContent || '';
+                }
+            });
+        }
+        
+        const modalHtml = `
+            <div class="modal-backdrop" onclick="dashboard.closeVlanEditModal()">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <h3>Edit VLAN ${vlanId}</h3>
+                        <button class="modal-close" onclick="dashboard.closeVlanEditModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="vlan-name-input">VLAN Name</label>
+                            <input type="text" id="vlan-name-input" class="form-control" 
+                                   value="${currentVlan.name}" placeholder="Enter VLAN name">
+                        </div>
+                        <div class="form-group">
+                            <label for="vlan-desc-input">Description</label>
+                            <input type="text" id="vlan-desc-input" class="form-control" 
+                                   value="${currentVlan.description}" placeholder="Enter description (optional)">
+                        </div>
+                        <div class="form-group">
+                            <label for="vlan-admin-input">Admin State</label>
+                            <select id="vlan-admin-input" class="form-control">
+                                <option value="up" ${currentVlan.admin_state === 'up' ? 'selected' : ''}>Up</option>
+                                <option value="down" ${currentVlan.admin_state === 'down' ? 'selected' : ''}>Down</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="dashboard.closeVlanEditModal()">Cancel</button>
+                        <button class="btn btn-primary" onclick="dashboard.saveVlanEdit(${vlanId})">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Focus the name input
+        setTimeout(() => {
+            const nameInput = document.getElementById('vlan-name-input');
+            if (nameInput) {
+                nameInput.focus();
+                nameInput.select();
+            }
+        }, 100);
+    }
+    
+    closeVlanEditModal() {
+        const modal = document.querySelector('.modal-backdrop');
+        if (modal) {
+            modal.remove();
+        }
+    }
+    
+    saveVlanEdit(vlanId) {
+        const nameInput = document.getElementById('vlan-name-input');
+        const descInput = document.getElementById('vlan-desc-input');
+        const adminInput = document.getElementById('vlan-admin-input');
+        
+        if (!nameInput) return;
+        
+        const vlanName = nameInput.value.trim();
+        if (!vlanName) {
+            this.showAlert('VLAN name is required', 'error');
             return;
         }
         
-        this.updateVlanOnSwitch(selectedSwitch, vlanId, { name: vlanName.trim() });
+        const updateData = {
+            name: vlanName
+        };
+        
+        if (descInput && descInput.value.trim()) {
+            updateData.description = descInput.value.trim();
+        }
+        
+        if (adminInput) {
+            updateData.admin_state = adminInput.value;
+        }
+        
+        this.closeVlanEditModal();
+        this.updateVlanOnSwitch(this.selectedSwitch, vlanId, updateData);
     }
     
     editInterface(interfaceName) {
-        const selectedSwitch = document.getElementById('manage-switch-selector').value;
-        if (!selectedSwitch) {
+        if (!this.selectedSwitch) {
             this.showAlert('Please select a switch first', 'error');
             return;
         }
         
-        // Create edit modal
+        // Check if interfaces are still loading
+        if (!this.interfacesReady()) {
+            this.showAlert('Please wait for interfaces to finish loading', 'warning');
+            return;
+        }
+        
+        // Create edit modal - for now use prompt, will be replaced with proper modal
         const description = prompt(`Enter description for interface ${interfaceName}:`);
         if (description === null) return; // User cancelled
         
-        this.updateInterfaceOnSwitch(selectedSwitch, interfaceName, { description: description });
+        this.updateInterfaceOnSwitch(this.selectedSwitch, interfaceName, { description: description });
+    }
+    
+    interfacesReady() {
+        // Simple check - could be enhanced to track actual loading state
+        const interfacesList = document.getElementById('interfaces-list');
+        return interfacesList && !interfacesList.innerHTML.includes('Loading');
     }
     
     async updateVlanOnSwitch(switchIp, vlanId, updateData) {

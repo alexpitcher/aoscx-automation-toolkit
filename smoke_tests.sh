@@ -64,7 +64,7 @@ test_endpoint "GET" "/api/switches" "switches count"
 echo
 echo "2. Testing Switch Overview Endpoint"
 echo "----------------------------------"
-test_endpoint "GET" "/api/switches/$SWITCH_IP/overview" "model hostname firmware_version port_count poe_status power_status fan_status cpu_usage"
+test_endpoint "GET" "/api/switches/$SWITCH_IP/overview" "model hostname firmware_version port_count poe_status power_status fan_status health"
 
 echo
 echo "3. Testing VLANs Endpoints"
