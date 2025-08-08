@@ -1,0 +1,4 @@
+{
+  "PSU-1/1/1": "/rest/v10.09/system/subsystems/chassis,1/fans/PSU-1%2F1%2F1",
+  "PSU-1/2/1": "/rest/v10.09/system/subsystems/chassis,1/fans/PSU-1%2F2%2F1"
+}

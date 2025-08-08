@@ -4,7 +4,7 @@ Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 import logging
 import time
 from flask import Flask, request, jsonify, render_template, redirect, make_response
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import requests
 from config.settings import Config
 from config.switch_inventory import inventory, SwitchInfo
@@ -17,10 +17,15 @@ from core.exceptions import (
     VLANOperationError, UnknownSwitchError, SwitchConnectionError
 )
 from core.api_logger import api_logger
+from core.cache import get_cached_or_fetch, interface_cache, vlan_cache, invalidate_switch_cache
 
 # Capability cache for switch-specific features
 capability_cache = {}
 CAPABILITY_CACHE_TTL = 60  # seconds
+
+# Legacy cache variables - now using TTL cache from core.cache
+# interface_cache = {}  # Now imported from core.cache
+INTERFACE_CACHE_TTL = 300  # seconds
 
 # Configure logging
 logging.basicConfig(
@@ -69,77 +74,399 @@ def detect_switch_capabilities(switch_ip: str, session_obj) -> Dict[str, Any]:
         'poe_supported': False,
         'cpu_supported': False,
         'expected_psu_slots': 1,
-        'expected_fan_zones': 1
+        'expected_fan_zones': 1,
+        'port_count': 0,
+        'platform_name': '',
+        'lldp_supported': False
     }
     
-    # Test PoE support
-    try:
-        poe_url = f"https://{switch_ip}/rest/v10.09/system/poe"
-        poe_response = session_obj.get(poe_url, timeout=5, verify=Config.SSL_VERIFY)
-        api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
-        
-        if poe_response.status_code == 200:
-            capabilities['poe_supported'] = True
-        elif poe_response.status_code in [400, 404]:
-            capabilities['poe_supported'] = False
-        else:
-            # Uncertain - assume not supported
-            capabilities['poe_supported'] = False
-            
-    except Exception as e:
-        logger.debug(f"PoE capability probe failed for {switch_ip}: {e}")
-        capabilities['poe_supported'] = False
-    
-    # Test CPU support - try multiple endpoints
-    cpu_endpoints = [
-        f"https://{switch_ip}/rest/v10.09/system/metrics/cpu",
-        f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1/management_module",
-        f"https://{switch_ip}/rest/v10.09/system/health",
-        f"https://{switch_ip}/rest/v10.09/system/monitoring"
-    ]
-    
-    for cpu_url in cpu_endpoints:
-        try:
-            cpu_response = session_obj.get(cpu_url, timeout=5, verify=Config.SSL_VERIFY)
-            api_logger.log_api_call('GET', cpu_url, {}, None, cpu_response.status_code, cpu_response.text, 0)
-            
-            if cpu_response.status_code == 200:
-                # Check if response contains CPU utilization data
-                try:
-                    data = cpu_response.json()
-                    if any(key in str(data).lower() for key in ['cpu', 'utilization', 'usage']):
-                        capabilities['cpu_supported'] = True
-                        # Store the working endpoint for future use
-                        capabilities['cpu_endpoint'] = cpu_url
-                        break
-                except:
-                    continue
-                    
-        except Exception as e:
-            logger.debug(f"CPU probe failed for {switch_ip} at {cpu_url}: {e}")
-            continue
-    
-    # Try to detect PSU slots and fan zones from system info
+    # Get system info first for platform detection
     try:
         system_url = f"https://{switch_ip}/rest/v10.09/system"
         system_response = session_obj.get(system_url, timeout=10, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', system_url, {}, None, system_response.status_code, system_response.text, 0)
+        
         if system_response.status_code == 200:
             system_data = system_response.json()
             platform_name = system_data.get('platform_name', '').lower()
+            capabilities['platform_name'] = platform_name
             
-            # Infer expected slots based on platform (conservative approach)
-            if any(model in platform_name for model in ['6300', '6400', '8320', '8325']):
+            # Platform-specific capability inference based on probe results
+            if '6300' in platform_name:
+                # PoE-capable but endpoints don't work via REST API
+                # Check chassis for PoE power data instead
+                capabilities['poe_supported'] = _check_chassis_poe_support(switch_ip, session_obj)
                 capabilities['expected_psu_slots'] = 2
-                capabilities['expected_fan_zones'] = 3
+                capabilities['expected_fan_zones'] = 0  # No fan monitoring on 6300
+            elif '9300' in platform_name:
+                capabilities['poe_supported'] = False  # High-speed switches don't have PoE
+                capabilities['expected_psu_slots'] = 2
+                capabilities['expected_fan_zones'] = 4
+            elif '10000' in platform_name:
+                capabilities['poe_supported'] = False  # Core switches don't have PoE
+                capabilities['expected_psu_slots'] = 2
+                capabilities['expected_fan_zones'] = 2
             else:
+                # Conservative defaults
                 capabilities['expected_psu_slots'] = 1
                 capabilities['expected_fan_zones'] = 1
                 
     except Exception as e:
         logger.debug(f"System info probe failed for {switch_ip}: {e}")
     
+    # Test CPU support - all probed switches failed these endpoints
+    # Based on probe results, these endpoints return 400 on all tested platforms
+    capabilities['cpu_supported'] = False
+    
+    # Test LLDP support
+    try:
+        lldp_url = f"https://{switch_ip}/rest/v10.09/system/lldp"
+        lldp_response = session_obj.get(lldp_url, timeout=5, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', lldp_url, {}, None, lldp_response.status_code, lldp_response.text, 0)
+        
+        if lldp_response.status_code == 200:
+            capabilities['lldp_supported'] = True
+    except Exception as e:
+        logger.debug(f"LLDP probe failed for {switch_ip}: {e}")
+    
+    # Get port count from interfaces
+    try:
+        interfaces_url = f"https://{switch_ip}/rest/v10.09/system/interfaces"
+        interfaces_response = session_obj.get(interfaces_url, timeout=10, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', interfaces_url, {}, None, interfaces_response.status_code, interfaces_response.text, 0)
+        
+        if interfaces_response.status_code == 200:
+            interfaces_list = interfaces_response.json()
+            # Count physical interfaces only
+            physical_interfaces = [k for k in interfaces_list.keys() 
+                                 if ':' not in k and k.startswith('1/1/')]
+            capabilities['port_count'] = len(physical_interfaces)
+    except Exception as e:
+        logger.debug(f"Interface count probe failed for {switch_ip}: {e}")
+    
     logger.info(f"Detected capabilities for {switch_ip}: {capabilities}")
     return capabilities
+
+def _check_chassis_poe_support(switch_ip: str, session_obj) -> bool:
+    """Check if chassis has PoE power data (alternative to REST PoE endpoints)."""
+    try:
+        chassis_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1"
+        chassis_response = session_obj.get(chassis_url, timeout=5, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', chassis_url, {}, None, chassis_response.status_code, chassis_response.text, 0)
+        
+        if chassis_response.status_code == 200:
+            chassis_data = chassis_response.json()
+            # Check if chassis has PoE power information
+            return 'poe_power' in chassis_data
+    except Exception as e:
+        logger.debug(f"Chassis PoE check failed for {switch_ip}: {e}")
+    return False
+
+def get_cached_interfaces(switch_ip: str, session_obj=None) -> Dict[str, Any]:
+    """Get cached interface data or fetch and cache if stale."""
+    current_time = time.time()
+    
+    # Check cache first
+    if switch_ip in interface_cache:
+        cached = interface_cache[switch_ip]
+        if current_time - cached['timestamp'] < INTERFACE_CACHE_TTL:
+            return cached['data']
+        else:
+            # Stale data - return immediately and refresh in background
+            # For now, we'll refresh synchronously to keep it simple
+            pass
+    
+    # Need to fetch interface data
+    if not session_obj:
+        try:
+            session_obj = direct_rest_manager._authenticate(switch_ip)
+        except Exception as e:
+            logger.warning(f"Failed to authenticate for interface caching on {switch_ip}: {e}")
+            return {'interfaces': [], 'total_count': 0}
+    
+    interface_data = _fetch_bulk_interfaces(switch_ip, session_obj)
+    
+    # Cache the result
+    interface_cache[switch_ip] = {
+        'data': interface_data,
+        'timestamp': current_time
+    }
+    
+    return interface_data
+
+def _fetch_interfaces_individually(switch_ip: str, session_obj, interfaces_list: Dict[str, str]) -> Dict[str, Any]:
+    """Fallback method to fetch interface data individually when bulk call returns URLs."""
+    physical_interfaces = []
+    
+    # Filter to physical interfaces only 
+    physical_interface_names = [name for name in interfaces_list.keys() 
+                               if ':' not in name and name.startswith('1/1/')]
+    
+    for name in physical_interface_names:
+        try:
+            # URL encode the interface name
+            encoded_name = name.replace('/', '%2F')
+            iface_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}"
+            iface_response = session_obj.get(iface_url, timeout=5, verify=Config.SSL_VERIFY)
+            
+            if iface_response.status_code == 200:
+                iface_data = iface_response.json()
+                
+                # Normalize interface data (same logic as bulk method)
+                admin_state = iface_data.get('admin_state', 'unknown')
+                link_state = iface_data.get('link_state', 'unknown')
+                
+                # Apply state normalization rules
+                if admin_state == 'down':
+                    status = 'disabled'
+                elif admin_state == 'up' and link_state == 'up':
+                    status = 'up'
+                else:
+                    status = 'down'
+                
+                # Format speed for display
+                link_speed = iface_data.get('link_speed', 0) or 0
+                speed_display = _format_interface_speed(link_speed)
+                
+                # Process VLAN membership
+                vlan_tag = iface_data.get('vlan_tag', {})
+                vlan_trunks = iface_data.get('vlan_trunks', {})
+                
+                # Extract untagged VLAN ID (vlan_tag is a dict with VLAN ID as key)
+                untagged_vlan = None
+                if isinstance(vlan_tag, dict) and vlan_tag:
+                    untagged_vlan = int(list(vlan_tag.keys())[0])
+                
+                # Extract tagged VLANs (vlan_trunks is a dict with VLAN IDs as keys)
+                tagged_vlans = []
+                if isinstance(vlan_trunks, dict):
+                    tagged_vlans = [int(vlan_id) for vlan_id in vlan_trunks.keys()]
+                
+                physical_interfaces.append({
+                    'name': name,
+                    'admin_state': admin_state,
+                    'link_state': link_state,
+                    'status': status,
+                    'link_speed': link_speed,
+                    'speed_display': speed_display,
+                    'type': iface_data.get('type', 'unknown'),
+                    'description': iface_data.get('description', ''),
+                    'mtu': iface_data.get('mtu', 1500),
+                    'untagged_vlan': untagged_vlan,
+                    'tagged_vlans': tagged_vlans
+                })
+                
+        except Exception as e:
+            logger.debug(f"Failed to fetch interface {name}: {e}")
+            continue
+    
+    return {
+        'interfaces': physical_interfaces,
+        'total_count': len(physical_interfaces)
+    }
+
+def _fetch_bulk_interfaces(switch_ip: str, session_obj) -> Dict[str, Any]:
+    """Fetch all interface data in bulk with VLAN attributes - no per-port calls."""
+    try:
+        # Single bulk call with VLAN attributes
+        bulk_url = f"https://{switch_ip}/rest/v10.09/system/interfaces?attributes=name,admin_state,link_state,link_speed,type,description,vlan_tag,vlan_trunks,mtu"
+        interfaces_response = session_obj.get(bulk_url, timeout=15, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', bulk_url, {}, None, interfaces_response.status_code, interfaces_response.text, 0)
+        
+        if interfaces_response.status_code != 200:
+            logger.warning(f"Bulk interfaces call failed with {interfaces_response.status_code}")
+            return {'interfaces': [], 'total_count': 0}
+            
+        interfaces_data = interfaces_response.json()
+        
+        # Check if we got URLs instead of actual data (some switches don't support attributes parameter)
+        sample_key = next(iter(interfaces_data)) if interfaces_data else None
+        sample_value = interfaces_data.get(sample_key, {}) if sample_key else {}
+        
+        if isinstance(sample_value, str) and sample_value.startswith('/rest/'):
+            logger.info(f"Switch {switch_ip} returned URLs instead of data, falling back to individual calls")
+            return _fetch_interfaces_individually(switch_ip, session_obj, interfaces_data)
+        
+        # Filter to physical interfaces only (exclude VLANs, lag, mgmt)
+        physical_interfaces = []
+        for name, iface_data in interfaces_data.items():
+            if ':' not in name and name.startswith('1/1/'):
+                # Normalize interface data
+                admin_state = iface_data.get('admin_state', 'unknown')
+                link_state = iface_data.get('link_state', 'unknown')
+                
+                # Apply state normalization rules
+                if admin_state == 'down':
+                    status = 'disabled'
+                elif admin_state == 'up' and link_state == 'up':
+                    status = 'up'
+                else:
+                    status = 'down'
+                
+                # Format speed for display
+                link_speed = iface_data.get('link_speed', 0) or 0
+                speed_display = _format_interface_speed(link_speed)
+                
+                # Process VLAN membership
+                vlan_tag = iface_data.get('vlan_tag', {})
+                vlan_trunks = iface_data.get('vlan_trunks', {})
+                
+                # Extract untagged VLAN ID (vlan_tag is a dict with VLAN ID as key)
+                untagged_vlan = None
+                if isinstance(vlan_tag, dict) and vlan_tag:
+                    untagged_vlan = int(list(vlan_tag.keys())[0])
+                
+                # Extract tagged VLANs (vlan_trunks is a dict with VLAN IDs as keys)
+                tagged_vlans = []
+                if isinstance(vlan_trunks, dict):
+                    tagged_vlans = [int(vlan_id) for vlan_id in vlan_trunks.keys()]
+                
+                interface = {
+                    'name': name,
+                    'admin_state': admin_state,
+                    'link_state': link_state,
+                    'status': status,
+                    'speed': link_speed,
+                    'speed_display': speed_display,
+                    'type': iface_data.get('type', 'unknown'),
+                    'description': iface_data.get('description', '') or '',
+                    'mtu': iface_data.get('mtu', 0) or 0,
+                    'untagged_vlan': untagged_vlan,
+                    'tagged_vlans': tagged_vlans
+                }
+                
+                physical_interfaces.append(interface)
+        
+        # Sort interfaces naturally by name
+        physical_interfaces.sort(key=lambda x: _natural_sort_key(x['name']))
+        
+        logger.info(f"Fetched {len(physical_interfaces)} interfaces for {switch_ip} in bulk")
+        
+        return {
+            'interfaces': physical_interfaces,
+            'total_count': len(physical_interfaces)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch bulk interfaces for {switch_ip}: {e}")
+        return {'interfaces': [], 'total_count': 0}
+
+def _format_interface_speed(link_speed):
+    """Format interface speed for display."""
+    if not link_speed or link_speed == 0:
+        return 'Unknown'
+    elif link_speed >= 100000:
+        return f'{link_speed // 1000}G'
+    elif link_speed >= 1000:
+        return f'{link_speed // 1000}G'
+    else:
+        return f'{link_speed}M'
+
+def _natural_sort_key(interface_name):
+    """Generate sort key for natural sorting of interface names like 1/1/1, 1/1/10."""
+    import re
+    parts = re.split(r'(\d+)', interface_name)
+    return [int(part) if part.isdigit() else part for part in parts]
+
+def _fetch_interface_poe(switch_ip: str, session_obj, interface_name: str) -> Dict[str, Any]:
+    """Fetch per-interface PoE data with fallback endpoints."""
+    encoded_name = interface_name.replace('/', '%2F')
+    
+    # Try per-interface PoE endpoints
+    poe_endpoints = [
+        f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}/poe",
+        f"https://{switch_ip}/rest/v10.09/system/poe/ports/{encoded_name}"
+    ]
+    
+    for poe_url in poe_endpoints:
+        try:
+            poe_response = session_obj.get(poe_url, timeout=3, verify=Config.SSL_VERIFY)
+            api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
+            
+            if poe_response.status_code == 200:
+                poe_data = poe_response.json()
+                return {
+                    'enabled': poe_data.get('enabled', False),
+                    'class': poe_data.get('class', 'N/A'),
+                    'watts': poe_data.get('power_drawn', 0) or poe_data.get('watts', 0)
+                }
+        except Exception as e:
+            logger.debug(f"PoE fetch failed for {interface_name} at {poe_url}: {e}")
+    
+    return None
+
+def _fetch_interface_lldp_neighbors(switch_ip: str, session_obj, interface_name: str) -> List[Dict[str, Any]]:
+    """Fetch LLDP neighbors for specific interface using correct AOS-CX API structure."""
+    encoded_name = interface_name.replace('/', '%2F')
+    neighbors = []
+    
+    try:
+        # Get LLDP neighbors list first
+        lldp_neighbors_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}/lldp_neighbors"
+        lldp_response = session_obj.get(lldp_neighbors_url, timeout=5, verify=Config.SSL_VERIFY)
+        api_logger.log_api_call('GET', lldp_neighbors_url, {}, None, lldp_response.status_code, lldp_response.text, 0)
+        
+        if lldp_response.status_code == 200:
+            neighbors_list = lldp_response.json()
+            
+            # neighbors_list is a dict with neighbor keys like "98:8f:00:c7:55:4f,98:8f:00:c7:55:4f"
+            if isinstance(neighbors_list, dict):
+                for neighbor_key, neighbor_url in neighbors_list.items():
+                    try:
+                        # Extract the encoded neighbor key from the URL path
+                        encoded_neighbor_key = neighbor_key.replace(':', '%3A').replace(',', ',')
+                        neighbor_detail_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}/lldp_neighbors/{encoded_neighbor_key}"
+                        
+                        neighbor_response = session_obj.get(neighbor_detail_url, timeout=3, verify=Config.SSL_VERIFY)
+                        api_logger.log_api_call('GET', neighbor_detail_url, {}, None, neighbor_response.status_code, neighbor_response.text, 0)
+                        
+                        if neighbor_response.status_code == 200:
+                            neighbor_data = neighbor_response.json()
+                            
+                            # Extract meaningful neighbor information
+                            neighbor_info = {
+                                'chassis_id': neighbor_data.get('chassis_id', ''),
+                                'port_id': neighbor_data.get('port_id', ''),
+                                'system_name': neighbor_data.get('system_name', ''),
+                                'system_description': neighbor_data.get('system_description', ''),
+                                'port_description': neighbor_data.get('port_description', '')
+                            }
+                            
+                            neighbors.append(neighbor_info)
+                        else:
+                            logger.debug(f"Failed to get LLDP neighbor detail for {neighbor_key}: {neighbor_response.status_code}")
+                            
+                    except Exception as neighbor_error:
+                        logger.debug(f"Error processing LLDP neighbor {neighbor_key}: {neighbor_error}")
+                        continue
+        else:
+            logger.debug(f"LLDP neighbors endpoint returned {lldp_response.status_code} for {interface_name}")
+            
+    except Exception as e:
+        logger.debug(f"LLDP neighbors fetch failed for {interface_name}: {e}")
+    
+    return neighbors
+
+def _calculate_vlan_membership(interfaces: List[Dict[str, Any]]) -> Dict[int, Dict[str, int]]:
+    """Calculate VLAN membership counts from interface VLAN data."""
+    membership = {}
+    
+    for interface in interfaces:
+        # Count untagged VLAN membership
+        untagged_vlan = interface.get('untagged_vlan')
+        if untagged_vlan is not None:
+            if untagged_vlan not in membership:
+                membership[untagged_vlan] = {'tagged': 0, 'untagged': 0}
+            membership[untagged_vlan]['untagged'] += 1
+        
+        # Count tagged VLAN membership
+        tagged_vlans = interface.get('tagged_vlans', [])
+        for vlan_id in tagged_vlans:
+            if vlan_id not in membership:
+                membership[vlan_id] = {'tagged': 0, 'untagged': 0}
+            membership[vlan_id]['tagged'] += 1
+    
+    return membership
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -706,6 +1033,7 @@ def get_api_call_logs():
     switch_ip = request.args.get('switch_ip')
     category = request.args.get('category')
     success_only = request.args.get('success_only')
+    since = request.args.get('since')  # For polling new entries
     
     # Convert string 'true'/'false' to boolean
     if success_only is not None:
@@ -716,7 +1044,8 @@ def get_api_call_logs():
             limit=limit,
             switch_ip=switch_ip,
             category=category,
-            success_only=success_only
+            success_only=success_only,
+            since=since
         )
         stats = api_logger.get_call_statistics()
         
@@ -790,6 +1119,27 @@ def normalize_status(raw_status: str) -> str:
     else:
         # Default to unknown for unrecognized statuses rather than assuming error
         return "unknown"
+
+def get_human_readable_status(raw_status: str) -> str:
+    """Convert raw status enums to human-readable labels."""
+    if not raw_status:
+        return "Unknown"
+    
+    # Handle specific fault patterns with descriptive labels
+    status_upper = str(raw_status).upper().strip()
+    
+    if status_upper == "FAULT__INPUT":
+        return "Input fault"
+    elif status_upper.startswith("FAULT__"):
+        fault_type = status_upper.replace("FAULT__", "").replace("_", " ").lower()
+        return f"{fault_type.capitalize()} fault"
+    elif status_upper.startswith("WARNING__"):
+        warning_type = status_upper.replace("WARNING__", "").replace("_", " ").lower()
+        return f"{warning_type.capitalize()} warning"
+    elif status_upper in ["OK", "GOOD", "NORMAL", "UP", "ONLINE", "OPERATIONAL", "ACTIVE", "RUNNING"]:
+        return "OK"
+    else:
+        return raw_status.replace("_", " ").title()
 
 def get_cpu_usage(switch_ip: str, session_obj, capabilities: Dict[str, Any]) -> tuple:
     """Get CPU usage percentage and status."""
@@ -909,12 +1259,24 @@ def get_switch_overview(switch_ip: str):
                             if ps_response.status_code == 200:
                                 ps_data = ps_response.json()
                                 raw_status = ps_data.get('status', 'unknown')
+                                raw_input_status = ps_data.get('input_status', 'unknown')
                                 normalized_status = normalize_status(raw_status)
+                                normalized_input_status = normalize_status(raw_input_status)
                                 psu_statuses.append(normalized_status)
+                                
+                                # Create detailed PSU info with proper error messages
+                                psu_detail = {
+                                    'id': psu_key,
+                                    'bay_label': f"PSU {psu_key.split('/')[-1]}" if '/' in psu_key else f"PSU {psu_key}",
+                                    'status': normalized_status,
+                                    'input_status': normalized_input_status
+                                }
+                                
                                 power_supplies_info.append({
                                     'slot': psu_key,
                                     'status': normalized_status,
-                                    'raw_status': raw_status
+                                    'raw_status': raw_status,
+                                    'detail': psu_detail
                                 })
                         except Exception as e:
                             logger.debug(f"Error getting PSU {psu_key} status: {e}")
@@ -993,30 +1355,54 @@ def get_switch_overview(switch_ip: str):
         # Get CPU usage using capabilities
         cpu_usage, cpu_status = get_cpu_usage(switch_ip, session_obj, capabilities)
         
-        # Get PoE status using capabilities
+        # Get PoE status from chassis subsystem data
+        poe_status = "N/A"
+        poe_details = {}
         if capabilities.get('poe_supported', False):
-            poe_status = "unknown"
             try:
-                poe_url = f"https://{switch_ip}/rest/v10.09/system/poe"
-                poe_response = session_obj.get(poe_url, timeout=5, verify=Config.SSL_VERIFY)
-                api_logger.log_api_call('GET', poe_url, {}, None, poe_response.status_code, poe_response.text, 0)
+                # Use chassis-level PoE data since REST PoE endpoints return 404
+                chassis_url = f"https://{switch_ip}/rest/v10.09/system/subsystems/chassis,1"
+                chassis_response = session_obj.get(chassis_url, timeout=5, verify=Config.SSL_VERIFY)
+                api_logger.log_api_call('GET', chassis_url, {}, None, chassis_response.status_code, chassis_response.text, 0)
                 
-                if poe_response.status_code == 200:
-                    poe_data = poe_response.json()
-                    # Check for any PoE-related status information
-                    if isinstance(poe_data, dict):
-                        # Look for status fields in PoE data
-                        if 'status' in poe_data:
-                            poe_status = normalize_status(poe_data['status'])
+                if chassis_response.status_code == 200:
+                    chassis_data = chassis_response.json()
+                    poe_power = chassis_data.get('poe_power', {})
+                    if poe_power:
+                        # Extract PoE power information
+                        available_power = poe_power.get('available_power', 0)
+                        drawn_power = poe_power.get('drawn_power', 0)
+                        reserved_power = poe_power.get('reserved_power', 0)
+                        
+                        if available_power > 0:
+                            # Calculate PoE utilization
+                            utilization = (drawn_power / available_power) * 100 if available_power > 0 else 0
+                            
+                            # Set status based on utilization
+                            if utilization > 95:
+                                poe_status = "warning"  # Near capacity
+                            elif utilization > 0:
+                                poe_status = "ok"
+                            else:
+                                poe_status = "ok"  # Available but not in use
+                            
+                            # Store PoE details for UI
+                            poe_details = {
+                                'available_power': available_power,
+                                'drawn_power': drawn_power,
+                                'reserved_power': reserved_power,
+                                'utilization_percent': round(utilization, 1),
+                                'status': poe_status
+                            }
                         else:
-                            poe_status = "ok"  # PoE endpoint accessible means PoE is functional
+                            poe_status = "error"  # PoE subsystem present but no available power
                     else:
-                        poe_status = "ok"
+                        poe_status = "unknown"  # No PoE data in chassis - might not have PoE
+                else:
+                    poe_status = "unknown"
             except Exception as e:
-                logger.debug(f"Error getting PoE status: {e}")
+                logger.debug(f"Error getting PoE status from chassis: {e}")
                 poe_status = "unknown"
-        else:
-            poe_status = "na"
         
         # Get model information
         platform_name = system_data.get('platform_name', 'Unknown')
@@ -1039,11 +1425,14 @@ def get_switch_overview(switch_ip: str):
         if psu_errors:
             health_status = "ERRORS"
             for psu in psu_errors:
-                health_reasons.append(f"PSU {psu['slot']}: {psu['raw_status']}")
+                bay_label = psu.get('detail', {}).get('bay_label', f"PSU {psu['slot']}")
+                readable_status = get_human_readable_status(psu['raw_status'])
+                health_reasons.append(f"{bay_label}: {readable_status}")
         elif fan_errors:
             health_status = "ERRORS"
             for fan in fan_errors:
-                health_reasons.append(f"Fan {fan['slot']}: {fan['raw_status']}")
+                readable_status = get_human_readable_status(fan['raw_status'])
+                health_reasons.append(f"Fan {fan['slot']}: {readable_status}")
         elif cpu_status == "error":
             health_status = "ERRORS" 
             health_reasons.append("CPU utilization critically high")
@@ -1056,11 +1445,14 @@ def get_switch_overview(switch_ip: str):
             elif psu_warnings:
                 health_status = "DEGRADED"
                 for psu in psu_warnings:
-                    health_reasons.append(f"PSU {psu['slot']} warning: {psu['raw_status']}")
+                    bay_label = psu.get('detail', {}).get('bay_label', f"PSU {psu['slot']}")
+                    readable_status = get_human_readable_status(psu['raw_status'])
+                    health_reasons.append(f"{bay_label}: {readable_status}")
             elif fan_warnings:
                 health_status = "DEGRADED"
                 for fan in fan_warnings:
-                    health_reasons.append(f"Fan {fan['slot']} warning: {fan['raw_status']}")
+                    readable_status = get_human_readable_status(fan['raw_status'])
+                    health_reasons.append(f"Fan {fan['slot']}: {readable_status}")
             elif cpu_status == "warning":
                 health_status = "DEGRADED"
                 health_reasons.append("CPU utilization high")
@@ -1071,6 +1463,7 @@ def get_switch_overview(switch_ip: str):
             'firmware_version': firmware_version,
             'port_count': port_count,
             'poe_status': poe_status,
+            'poe_details': poe_details,
             'power_status': power_status,
             'fan_status': fan_status,
             'cpu_status': cpu_status,
@@ -1079,6 +1472,7 @@ def get_switch_overview(switch_ip: str):
                 'status': health_status,
                 'reasons': health_reasons[:3]  # Limit to first 3 reasons
             },
+            'psu_details': [psu.get('detail', {}) for psu in power_supplies_info if psu.get('detail')],
             'uptime': system_data.get('boot_time', 0),
             'management_ip': system_data.get('mgmt_intf_status', {}).get('ip', switch_ip)
         }
@@ -1137,6 +1531,14 @@ def get_switch_vlans(switch_ip: str):
         vlans_list = vlans_response.json()
         vlans_data = []
         
+        # Get cached interfaces to calculate VLAN membership
+        try:
+            interfaces_data = _fetch_bulk_interfaces(switch_ip, session_obj)
+            vlan_membership = _calculate_vlan_membership(interfaces_data.get('interfaces', []))
+        except Exception as e:
+            logger.warning(f"Failed to get interface data for VLAN membership: {e}")
+            vlan_membership = {}
+        
         # Get details for each VLAN
         for vlan_id, vlan_url in vlans_list.items():
             try:
@@ -1146,31 +1548,46 @@ def get_switch_vlans(switch_ip: str):
                 
                 if vlan_response.status_code == 200:
                     vlan_data = vlan_response.json()
+                    vlan_int_id = int(vlan_id)
+                    membership = vlan_membership.get(vlan_int_id, {'tagged': 0, 'untagged': 0})
+                    
                     vlans_data.append({
-                        'id': int(vlan_id),
+                        'id': vlan_int_id,
                         'name': vlan_data.get('name', f'VLAN{vlan_id}'),
                         'admin_state': vlan_data.get('admin', 'unknown'),
                         'oper_state': vlan_data.get('oper_state', 'unknown'),
-                        'description': vlan_data.get('description', '')
+                        'description': vlan_data.get('description', ''),
+                        'tagged_interfaces': membership['tagged'],
+                        'untagged_interfaces': membership['untagged']
                     })
                 else:
                     logger.warning(f"Failed to get VLAN {vlan_id} details: {vlan_response.status_code}")
+                    vlan_int_id = int(vlan_id)
+                    membership = vlan_membership.get(vlan_int_id, {'tagged': 0, 'untagged': 0})
+                    
                     vlans_data.append({
-                        'id': int(vlan_id),
+                        'id': vlan_int_id,
                         'name': f'VLAN{vlan_id}',
                         'admin_state': 'unknown',
                         'oper_state': 'unknown',
-                        'description': ''
+                        'description': '',
+                        'tagged_interfaces': membership['tagged'],
+                        'untagged_interfaces': membership['untagged']
                     })
             except Exception as e:
                 logger.warning(f"Error getting VLAN {vlan_id} details: {e}")
                 # Add basic VLAN info even if details fail
+                vlan_int_id = int(vlan_id)
+                membership = vlan_membership.get(vlan_int_id, {'tagged': 0, 'untagged': 0})
+                
                 vlans_data.append({
-                    'id': int(vlan_id),
+                    'id': vlan_int_id,
                     'name': f'VLAN{vlan_id}',
                     'admin_state': 'unknown',
                     'oper_state': 'unknown',
-                    'description': ''
+                    'description': '',
+                    'tagged_interfaces': membership['tagged'],
+                    'untagged_interfaces': membership['untagged']
                 })
         
         # Sort by VLAN ID
@@ -1188,109 +1605,68 @@ def get_switch_vlans(switch_ip: str):
 
 @app.route('/api/switches/<switch_ip>/interfaces')
 def get_switch_interfaces(switch_ip: str):
-    """Get real interface data from the switch."""
+    """Get interface data using cached bulk fetch with optional LLDP."""
     try:
-        # Two-attempt authentication with session cleanup on failure
-        session_obj = None
+        # Get include parameters for additional data
+        include_lldp = request.args.get('include') == 'lldp'
         
-        for attempt in range(2):
-            try:
-                session_obj = direct_rest_manager._authenticate(switch_ip)
-                logger.info(f"Authentication successful for interfaces on {switch_ip} on attempt {attempt + 1}")
-                break
-            except Exception as auth_error:
-                logger.warning(f"Interfaces auth attempt {attempt + 1} failed for {switch_ip}: {auth_error}")
-                if attempt == 0:
-                    logger.info(f"Cleaning up sessions for interfaces call on {switch_ip}")
-                    direct_rest_manager.cleanup_session(switch_ip)
-                    time.sleep(1)
-                else:
-                    logger.error(f"Interfaces authentication failed after 2 attempts for {switch_ip}")
-                    error_response = {'error': f'Authentication failed: {str(auth_error)}'}
-                    api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 401, str(error_response), 0)
-                    return jsonify(error_response), 401
-        
-        if not session_obj:
-            error_response = {'error': 'Failed to authenticate to switch'}
-            api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 401, str(error_response), 0)
-            return jsonify(error_response), 401
-        
-        # Get interfaces list
-        interfaces_url = f"https://{switch_ip}/rest/v10.09/system/interfaces"
-        interfaces_response = session_obj.get(interfaces_url, timeout=10, verify=Config.SSL_VERIFY)
-        api_logger.log_api_call('GET', interfaces_url, {}, None, interfaces_response.status_code, interfaces_response.text, 0)
-        
-        if interfaces_response.status_code != 200:
-            error_response = {'error': f'Failed to get interfaces: {interfaces_response.status_code}'}
-            api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 500, str(error_response), 0)
-            return jsonify(error_response), 500
+        def fetch_interfaces():
+            # Two-attempt authentication with session cleanup on failure
+            session_obj = None
+            for attempt in range(2):
+                try:
+                    session_obj = direct_rest_manager._authenticate(switch_ip)
+                    logger.info(f"Authentication successful for interfaces on {switch_ip} on attempt {attempt + 1}")
+                    break
+                except Exception as auth_error:
+                    logger.warning(f"Interfaces auth attempt {attempt + 1} failed for {switch_ip}: {auth_error}")
+                    if attempt == 0:
+                        logger.info(f"Cleaning up sessions for interfaces call on {switch_ip}")
+                        direct_rest_manager.cleanup_session(switch_ip)
+                        time.sleep(1)
+                    else:
+                        raise auth_error
             
-        interfaces_list = interfaces_response.json()
-        interfaces_data = []
-        
-        # Filter to physical interfaces only (exclude sub-interfaces)
-        physical_interfaces = {k: v for k, v in interfaces_list.items() 
-                             if ':' not in k and k.startswith('1/1/')}
-        
-        # Get details for each interface
-        for interface_name, interface_url in physical_interfaces.items():
-            try:
-                # URL encode the interface name for the API call
-                encoded_name = interface_name.replace('/', '%2F')
-                interface_detail_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}"
-                interface_response = session_obj.get(interface_detail_url, timeout=5, verify=Config.SSL_VERIFY)
-                api_logger.log_api_call('GET', interface_detail_url, {}, None, interface_response.status_code, interface_response.text, 0)
+            if not session_obj:
+                raise Exception('Failed to authenticate to switch')
+            
+            # Fetch bulk interfaces with VLAN data
+            interfaces_data = _fetch_bulk_interfaces(switch_ip, session_obj)
+            
+            # Add LLDP neighbors if requested (per-port calls but cached)
+            if include_lldp and interfaces_data.get('interfaces'):
+                enhanced_interfaces = []
+                for interface in interfaces_data['interfaces']:
+                    enhanced_interface = interface.copy()
+                    
+                    # Fetch LLDP neighbors for this interface
+                    try:
+                        lldp_neighbors = _fetch_interface_lldp_neighbors(switch_ip, session_obj, interface['name'])
+                        enhanced_interface['lldp_neighbors'] = lldp_neighbors
+                        enhanced_interface['lldp_count'] = len(lldp_neighbors)
+                    except Exception as e:
+                        logger.debug(f"LLDP fetch failed for {interface['name']}: {e}")
+                        enhanced_interface['lldp_neighbors'] = []
+                        enhanced_interface['lldp_count'] = 0
+                    
+                    enhanced_interfaces.append(enhanced_interface)
                 
-                if interface_response.status_code == 200:
-                    interface_data = interface_response.json()
-                    
-                    # Determine status
-                    admin_state = interface_data.get('admin_state', 'unknown')
-                    link_state = interface_data.get('link_state', 'unknown')
-                    
-                    # Map states to our UI expectations
-                    status = 'down'
-                    if admin_state == 'up' and link_state == 'up':
-                        status = 'up'
-                    elif admin_state == 'down':
-                        status = 'disabled'
-                    
-                    interfaces_data.append({
-                        'name': interface_name,
-                        'admin_state': admin_state,
-                        'link_state': link_state,
-                        'status': status,
-                        'speed': interface_data.get('link_speed', 0),
-                        'type': interface_data.get('type', 'unknown'),
-                        'description': interface_data.get('description', '') or '',
-                        'mtu': interface_data.get('mtu', 0)
-                    })
-                else:
-                    logger.warning(f"Failed to get interface {interface_name} details: {interface_response.status_code}")
-                    interfaces_data.append({
-                        'name': interface_name,
-                        'admin_state': 'unknown',
-                        'link_state': 'unknown',
-                        'status': 'unknown',
-                        'description': '',
-                        'mtu': 0
-                    })
-            except Exception as e:
-                logger.warning(f"Error getting interface {interface_name} details: {e}")
-                # Add basic interface info even if details fail
-                interfaces_data.append({
-                    'name': interface_name,
-                    'admin_state': 'unknown',
-                    'link_state': 'unknown',
-                    'status': 'unknown',
-                    'description': '',
-                    'mtu': 0
-                })
+                interfaces_data['interfaces'] = enhanced_interfaces
+            
+            return interfaces_data
         
-        # Sort by interface name
-        interfaces_data.sort(key=lambda x: x['name'])
+        # Use cache with 5-minute TTL
+        cache_key = f"interfaces_bulk{'_lldp' if include_lldp else ''}"
+        try:
+            interfaces_data = get_cached_or_fetch(interface_cache, switch_ip, cache_key, fetch_interfaces)
+        except Exception as cache_error:
+            logger.warning(f"Cache error, falling back to direct fetch: {cache_error}")
+            interfaces_data = fetch_interfaces()
         
-        result = {'interfaces': interfaces_data, 'total_count': len(interfaces_data)}
+        result = {
+            'interfaces': interfaces_data.get('interfaces', []),
+            'total_count': interfaces_data.get('total_count', 0)
+        }
         api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 200, str(result), 0)
         return jsonify(result)
         

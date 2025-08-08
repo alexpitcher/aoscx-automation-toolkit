@@ -932,6 +932,22 @@ body {
     justify-content: center;
 }
 
+/* Main Modal System */
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.modal.active {
+    display: flex;
+}
+
 .modal-overlay {
     position: absolute;
     top: 0;
@@ -944,13 +960,60 @@ body {
 
 .modal-content {
     position: relative;
-    background: white;
+    background: var(--background);
+    border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     max-width: 90vw;
     max-height: 90vh;
     overflow: hidden;
     animation: modalSlideIn 0.3s ease-out;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--foreground);
+    margin: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.modal-close:hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+/* Dark theme form inputs in modals */
+.modal .form-input,
+.modal .form-input:focus {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+}
+
+.modal .form-label {
+    color: var(--foreground);
 }
 
 @keyframes modalSlideIn {
@@ -1385,15 +1448,23 @@ body {
 .vlan-item {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     padding: 1rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--card);
+    margin-bottom: 0.5rem;
 }
 
 .vlan-info {
     flex: 1;
+}
+
+.vlan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
 }
 
 .vlan-id {
@@ -1402,10 +1473,40 @@ body {
     font-size: 1rem;
 }
 
+.vlan-status {
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.vlan-status.status-up {
+    background: var(--success);
+    color: white;
+}
+
+.vlan-status.status-down {
+    background: var(--destructive);
+    color: white;
+}
+
 .vlan-name {
+    color: var(--foreground);
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.vlan-membership {
     color: var(--muted-foreground);
     font-size: 0.875rem;
-    margin-top: 0.25rem;
+    margin-bottom: 0.125rem;
+}
+
+.vlan-description {
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+    font-style: italic;
 }
 
 /* Floating Settings Button */
@@ -1440,7 +1541,7 @@ body {
     transform: translateY(0);
 }
 
-/* Modal Styles */
+/* Modal Styles - Enhanced for proper overlay and theming */
 .modal {
     display: none;
     position: fixed;
@@ -1449,7 +1550,7 @@ body {
     width: 100%;
     height: 100%;
     z-index: 10000;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
 }
 
@@ -1461,12 +1562,14 @@ body {
 
 .modal-content {
     background: var(--card);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: var(--shadow-lg);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
     max-width: 90vw;
     max-height: 90vh;
     overflow: hidden;
     animation: modalSlideIn 0.3s ease-out;
+    position: relative;
 }
 
 .modal-header {
@@ -1505,6 +1608,36 @@ body {
     padding: 1.5rem;
     max-height: calc(90vh - 100px);
     overflow-y: auto;
+}
+
+/* Modal form theming */
+.modal input[type="text"],
+.modal input[type="number"],
+.modal textarea,
+.modal select {
+    background: var(--input) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--foreground) !important;
+    border-radius: 6px;
+    padding: 0.5rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.modal input[type="text"]:focus,
+.modal input[type="number"]:focus,
+.modal textarea:focus,
+.modal select:focus {
+    outline: none;
+    border-color: var(--ring) !important;
+    box-shadow: 0 0 0 2px var(--ring) !important;
+}
+
+.modal label {
+    color: var(--foreground) !important;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    display: block;
 }
 
 .settings-section {

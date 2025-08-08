@@ -143,8 +143,9 @@ class APILogger:
     def get_recent_calls(self, limit: int = 20, 
                         switch_ip: Optional[str] = None,
                         category: Optional[str] = None,
-                        success_only: Optional[bool] = None) -> List[Dict[str, Any]]:
-        """Get recent API calls with optional filtering."""
+                        success_only: Optional[bool] = None,
+                        since: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get recent API calls with optional filtering and timestamp sorting."""
         with self._lock:
             calls = list(self.call_history)
         
@@ -157,9 +158,20 @@ class APILogger:
         
         if success_only is not None:
             calls = [call for call in calls if call.get('success', False) == success_only]
+            
+        # Filter by timestamp if since parameter provided
+        if since:
+            calls = [call for call in calls if (call.get('timestamp') or '') > since]
         
-        # Return most recent calls first
-        return calls[-limit:] if limit else calls
+        # Sort by timestamp DESC (newest first), handle None values
+        def sort_key(call):
+            timestamp = call.get('timestamp')
+            return timestamp or ''  # None values become empty string (sorted first)
+            
+        calls.sort(key=sort_key, reverse=True)
+        
+        # Return limited results
+        return calls[:limit] if limit else calls
     
     def get_call_statistics(self) -> Dict[str, Any]:
         """Get statistics about API calls."""
