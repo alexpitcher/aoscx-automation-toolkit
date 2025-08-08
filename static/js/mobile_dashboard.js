@@ -1620,6 +1620,15 @@ class MobileDashboard {
         const cancelBtn = document.getElementById('vlan-edit-cancel');
         const saveBtn = document.getElementById('vlan-edit-save');
         
+        // Setup Add VLAN button to use modal instead of prompt
+        const addVlanBtns = document.querySelectorAll('button');
+        addVlanBtns.forEach(btn => {
+            if (btn.textContent.includes('Add VLAN') || btn.onclick && btn.onclick.toString().includes('addVlan')) {
+                btn.onclick = null; // Remove inline onclick
+                btn.addEventListener('click', () => this.showAddVlanModal());
+            }
+        });
+        
         // Close modal handlers
         [closeBtn, cancelBtn].forEach(btn => {
             if (btn && modal) {
@@ -1931,21 +1940,45 @@ class MobileDashboard {
             return;
         }
         
-        vlansList.innerHTML = vlans.map(vlan => `
-            <div class="vlan-item">
-                <div class="vlan-info">
-                    <div class="vlan-id">VLAN ${vlan.id}</div>
-                    <div class="vlan-name">${vlan.name || 'Unnamed'}</div>
+        vlansList.innerHTML = vlans.map(vlan => {
+            const taggedCount = vlan.tagged_interfaces || 0;
+            const untaggedCount = vlan.untagged_interfaces || 0;
+            const totalInterfaces = taggedCount + untaggedCount;
+            
+            // Build membership display text
+            let membershipText = '';
+            if (totalInterfaces > 0) {
+                const parts = [];
+                if (taggedCount > 0) parts.push(`Tagged: ${taggedCount}`);
+                if (untaggedCount > 0) parts.push(`Untagged: ${untaggedCount}`);
+                membershipText = parts.join(' • ');
+            } else {
+                membershipText = 'No interfaces';
+            }
+            
+            return `
+                <div class="vlan-item">
+                    <div class="vlan-info">
+                        <div class="vlan-header">
+                            <div class="vlan-id">VLAN ${vlan.id}</div>
+                            <div class="vlan-status ${vlan.admin_state === 'up' ? 'status-up' : 'status-down'}">
+                                ${vlan.admin_state === 'up' ? 'UP' : 'DOWN'}
+                            </div>
+                        </div>
+                        <div class="vlan-name">${vlan.name || 'Unnamed'}</div>
+                        <div class="vlan-membership text-muted-foreground">${membershipText}</div>
+                        ${vlan.description ? `<div class="vlan-description text-muted-foreground">${vlan.description}</div>` : ''}
+                    </div>
+                    <div class="interface-actions">
+                        <button class="edit-btn" onclick="dashboard.editVlan(${vlan.id})" title="Edit VLAN">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
-                <div class="interface-actions">
-                    <button class="edit-btn" onclick="dashboard.editVlan(${vlan.id})" title="Edit VLAN">
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
     
     parseIfName(ifname) {
@@ -2318,7 +2351,39 @@ class MobileDashboard {
         }
     }
     
-    // Edit methods for VLANs and interfaces
+    // Add/Edit methods for VLANs and interfaces
+    showAddVlanModal() {
+        const modal = document.getElementById('vlan-edit-modal');
+        if (!modal) return;
+        
+        // Clear form for adding new VLAN
+        document.getElementById('vlan-id-value').value = '';
+        document.getElementById('vlan-name').value = '';
+        document.getElementById('vlan-description').value = '';
+        document.getElementById('vlan-admin-state').value = 'up';
+        
+        // Make VLAN ID field editable for new VLANs
+        const vlanIdField = document.getElementById('vlan-id-value');
+        if (vlanIdField) {
+            vlanIdField.readOnly = false;
+            vlanIdField.style.backgroundColor = '';
+        }
+        
+        // Update modal title
+        const modalTitle = document.querySelector('#vlan-edit-modal .modal-title');
+        if (modalTitle) {
+            modalTitle.textContent = 'Add New VLAN';
+        }
+        
+        // Show modal
+        modal.classList.add('active');
+        
+        // Focus VLAN ID field after animation
+        setTimeout(() => {
+            if (vlanIdField) vlanIdField.focus();
+        }, 100);
+    }
+    
     editVlan(vlanId) {
         if (!this.selectedSwitch) {
             this.showAlert('Please select a switch first', 'error');
@@ -2359,6 +2424,13 @@ class MobileDashboard {
         document.getElementById('vlan-name').value = currentVlan.name;
         document.getElementById('vlan-description').value = currentVlan.description;
         document.getElementById('vlan-admin-state').value = currentVlan.admin_state;
+        
+        // Make VLAN ID field readonly when editing
+        const vlanIdField = document.getElementById('vlan-id-value');
+        if (vlanIdField) {
+            vlanIdField.readOnly = true;
+            vlanIdField.style.backgroundColor = 'var(--muted)';
+        }
         
         // Update modal title
         const modalTitle = document.querySelector('#vlan-edit-modal .modal-title');

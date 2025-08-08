@@ -1,0 +1,15 @@
+Testing: /rest/v10.09/system/lldp
+resource or attribute: lldp not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/interfaces/1%2F1%2F1/lldp
+resource or attribute: lldp not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/subsystems/chassis,1/lldp
+resource or attribute: lldp not found
+
+HTTP:400
+---

@@ -1,0 +1,25 @@
+Testing: /rest/v10.09/system/metrics/cpu
+resource or attribute: metrics not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/subsystems/chassis,1/management_module
+resource or attribute: management_module not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/subsystems/chassis,1/management_module/1
+resource or attribute: management_module not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/health
+resource or attribute: health not found
+
+HTTP:400
+---
+Testing: /rest/v10.09/system/monitoring
+resource or attribute: monitoring not found
+
+HTTP:400
+---
