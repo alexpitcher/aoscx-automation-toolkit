@@ -932,6 +932,22 @@ body {
     justify-content: center;
 }
 
+/* Main Modal System */
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.modal.active {
+    display: flex;
+}
+
 .modal-overlay {
     position: absolute;
     top: 0;
@@ -944,13 +960,60 @@ body {
 
 .modal-content {
     position: relative;
-    background: white;
+    background: var(--background);
+    border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     max-width: 90vw;
     max-height: 90vh;
     overflow: hidden;
     animation: modalSlideIn 0.3s ease-out;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--foreground);
+    margin: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.modal-close:hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+/* Dark theme form inputs in modals */
+.modal .form-input,
+.modal .form-input:focus {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+}
+
+.modal .form-label {
+    color: var(--foreground);
 }
 
 @keyframes modalSlideIn {

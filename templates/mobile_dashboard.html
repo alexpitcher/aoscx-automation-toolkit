@@ -689,6 +689,82 @@
         </button>
     </div>
 
+    <!-- Interface Edit Modal -->
+    <div id="interface-edit-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Edit Interface</h3>
+                <button class="modal-close" id="interface-edit-close">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="interface-edit-form" class="space-y-4">
+                    <div>
+                        <label for="interface-name-display" class="form-label">Interface</label>
+                        <input type="text" id="interface-name-display" class="form-input" readonly>
+                        <input type="hidden" id="interface-name-value">
+                    </div>
+                    <div>
+                        <label for="interface-description" class="form-label">Description</label>
+                        <input type="text" id="interface-description" class="form-input" placeholder="Enter interface description">
+                    </div>
+                    <div class="flex gap-2 justify-end">
+                        <button type="button" class="btn-secondary" id="interface-edit-cancel">Cancel</button>
+                        <button type="submit" class="btn-primary" id="interface-edit-save">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- VLAN Edit Modal -->
+    <div id="vlan-edit-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Edit VLAN</h3>
+                <button class="modal-close" id="vlan-edit-close">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="vlan-edit-form" class="space-y-4">
+                    <div>
+                        <label for="vlan-id-display" class="form-label">VLAN ID</label>
+                        <input type="text" id="vlan-id-display" class="form-input" readonly>
+                        <input type="hidden" id="vlan-id-value">
+                    </div>
+                    <div>
+                        <label for="vlan-name" class="form-label">Name</label>
+                        <input type="text" id="vlan-name" class="form-input" placeholder="Enter VLAN name" autofocus>
+                    </div>
+                    <div>
+                        <label for="vlan-description" class="form-label">Description</label>
+                        <input type="text" id="vlan-description" class="form-input" placeholder="Enter VLAN description">
+                    </div>
+                    <div>
+                        <label for="vlan-admin-state" class="form-label">Admin State</label>
+                        <select id="vlan-admin-state" class="form-input">
+                            <option value="up">Up</option>
+                            <option value="down">Down</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2 justify-end">
+                        <button type="button" class="btn-secondary" id="vlan-edit-cancel">Cancel</button>
+                        <button type="submit" class="btn-primary" id="vlan-edit-save">
+                            <span class="btn-text">Save</span>
+                            <div class="spinner hidden"></div>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal">
         <div class="modal-content">

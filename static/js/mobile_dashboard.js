@@ -23,6 +23,8 @@ class MobileDashboard {
         this.setupManageSubNavigation();
         this.setupToggleSwitches();
         this.setupSettingsModal();
+        this.setupInterfaceModal();
+        this.setupVlanModal();
         this.loadSwitches();
         this.startHealthMonitoring();
         this.setupPullToRefresh();
@@ -73,6 +75,11 @@ class MobileDashboard {
 
         this.activeTab = tabName;
 
+        // Stop logs polling when switching away from logs tab
+        if (this.activeTab === 'logs' && tabName !== 'logs') {
+            this.stopLogsPolling();
+        }
+
         // Load data for specific tabs
         if (tabName === 'onboard') {
             this.loadSwitches();
@@ -86,6 +93,8 @@ class MobileDashboard {
         } else if (tabName === 'logs') {
             this.loadApiLogs();
             this.updateLogsFilterSwitches();
+            // Start logs polling when switching to logs tab
+            this.startLogsPolling();
         }
     }
 
@@ -174,6 +183,11 @@ class MobileDashboard {
             if (e.state && e.state.tab) {
                 this.showTab(e.state.tab);
             }
+        });
+
+        // Cleanup polling on page unload
+        window.addEventListener('beforeunload', () => {
+            this.stopLogsPolling();
         });
     }
 
@@ -1242,7 +1256,7 @@ class MobileDashboard {
     }
 
     // API Logs functionality
-    async loadApiLogs() {
+    async loadApiLogs(since = null) {
         try {
             this.setButtonLoading('refresh-logs', true);
             
@@ -1257,13 +1271,25 @@ class MobileDashboard {
             if (switchIp) params.append('switch_ip', switchIp);
             if (category) params.append('category', category);
             if (successOnly) params.append('success_only', successOnly);
+            if (since) params.append('since', since);
             
             const response = await fetch(`/api/logs/calls?${params.toString()}`);
             const data = await response.json();
             
             if (response.ok) {
-                this.renderApiLogs(data.calls);
+                if (since) {
+                    // For polling updates, prepend new entries
+                    this.prependApiLogs(data.calls);
+                } else {
+                    // Full refresh
+                    this.renderApiLogs(data.calls);
+                }
                 this.updateLogsStatistics(data.statistics);
+                
+                // Store latest timestamp for polling
+                if (data.calls && data.calls.length > 0) {
+                    this.lastLogTimestamp = data.calls[0].timestamp;
+                }
             } else {
                 this.showAlert('Error loading API logs: ' + (data.error || 'Unknown error'), 'error');
             }
@@ -1272,6 +1298,59 @@ class MobileDashboard {
             this.showAlert('Error loading API logs: ' + error.message, 'error');
         } finally {
             this.setButtonLoading('refresh-logs', false);
+        }
+    }
+    
+    prependApiLogs(newCalls) {
+        // Prepend new log entries to existing list
+        if (!newCalls || newCalls.length === 0) return;
+        
+        const container = document.getElementById('logs-list');
+        if (!container) return;
+        
+        const newLogsHtml = newCalls.map(call => `
+            <div class="log-entry ${call.success ? 'success' : 'error'}">
+                <div class="log-header">
+                    <span class="method ${call.method}">${call.method}</span>
+                    <span class="url">${this.shortenUrl(call.url)}</span>
+                    <span class="status ${call.success ? 'success' : 'error'}">${call.response_code}</span>
+                    <span class="timestamp">${this.formatTimestamp(call.timestamp)}</span>
+                </div>
+                ${call.error_message ? `<div class="error-message">${call.error_message}</div>` : ''}
+                ${call.duration_ms ? `<div class="duration">${call.duration_ms}ms</div>` : ''}
+            </div>
+        `).join('');
+        
+        container.insertAdjacentHTML('afterbegin', newLogsHtml);
+        
+        // Remove excess entries to maintain limit
+        const entries = container.querySelectorAll('.log-entry');
+        const maxEntries = 50;
+        if (entries.length > maxEntries) {
+            for (let i = maxEntries; i < entries.length; i++) {
+                entries[i].remove();
+            }
+        }
+    }
+    
+    startLogsPolling() {
+        // Stop any existing polling
+        if (this.logsPollingInterval) {
+            clearInterval(this.logsPollingInterval);
+        }
+        
+        // Poll every 5 seconds when on logs tab
+        this.logsPollingInterval = setInterval(() => {
+            if (this.activeTab === 'logs' && this.lastLogTimestamp) {
+                this.loadApiLogs(this.lastLogTimestamp);
+            }
+        }, 5000);
+    }
+    
+    stopLogsPolling() {
+        if (this.logsPollingInterval) {
+            clearInterval(this.logsPollingInterval);
+            this.logsPollingInterval = null;
         }
     }
 
@@ -1292,8 +1371,12 @@ class MobileDashboard {
             return;
         }
         
-        // Sort calls by timestamp (most recent first)
-        const sortedCalls = [...calls].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        // Sort calls by timestamp (most recent first) - handle null/undefined timestamps
+        const sortedCalls = [...calls].sort((a, b) => {
+            const dateA = a.timestamp ? new Date(a.timestamp) : new Date(0);
+            const dateB = b.timestamp ? new Date(b.timestamp) : new Date(0);
+            return dateB - dateA;
+        });
         
         const logsHtml = sortedCalls.map(call => `
             <div class="log-entry ${call.success ? 'success' : 'error'}">
@@ -1487,6 +1570,148 @@ class MobileDashboard {
                 }
             });
         }
+    }
+    
+    setupInterfaceModal() {
+        const modal = document.getElementById('interface-edit-modal');
+        const form = document.getElementById('interface-edit-form');
+        const closeBtn = document.getElementById('interface-edit-close');
+        const cancelBtn = document.getElementById('interface-edit-cancel');
+        
+        // Close modal handlers
+        [closeBtn, cancelBtn].forEach(btn => {
+            if (btn && modal) {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    modal.classList.remove('active');
+                });
+            }
+        });
+        
+        // Close on backdrop click
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
+        }
+        
+        // Handle form submission
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                
+                const interfaceName = document.getElementById('interface-name-value').value;
+                const description = document.getElementById('interface-description').value;
+                
+                if (interfaceName && this.selectedSwitch) {
+                    this.updateInterfaceOnSwitch(this.selectedSwitch, interfaceName, { description: description });
+                    modal.classList.remove('active');
+                }
+            });
+        }
+    }
+    
+    setupVlanModal() {
+        const modal = document.getElementById('vlan-edit-modal');
+        const form = document.getElementById('vlan-edit-form');
+        const closeBtn = document.getElementById('vlan-edit-close');
+        const cancelBtn = document.getElementById('vlan-edit-cancel');
+        const saveBtn = document.getElementById('vlan-edit-save');
+        
+        // Close modal handlers
+        [closeBtn, cancelBtn].forEach(btn => {
+            if (btn && modal) {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    modal.classList.remove('active');
+                });
+            }
+        });
+        
+        // Close on backdrop click
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
+            
+            // ESC key handler
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal.classList.contains('active')) {
+                    modal.classList.remove('active');
+                }
+            });
+        }
+        
+        // Handle form submission
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                
+                const vlanId = document.getElementById('vlan-id-value').value;
+                const vlanName = document.getElementById('vlan-name').value.trim();
+                const vlanDescription = document.getElementById('vlan-description').value.trim();
+                const adminState = document.getElementById('vlan-admin-state').value;
+                
+                if (!vlanId || !vlanName) {
+                    this.showAlert('VLAN ID and name are required', 'error');
+                    return;
+                }
+                
+                // Show spinner
+                const spinner = saveBtn.querySelector('.spinner');
+                const btnText = saveBtn.querySelector('.btn-text');
+                if (spinner && btnText) {
+                    spinner.classList.remove('hidden');
+                    btnText.textContent = 'Saving...';
+                    saveBtn.disabled = true;
+                }
+                
+                const updateData = {
+                    name: vlanName,
+                    admin_state: adminState
+                };
+                
+                if (vlanDescription) {
+                    updateData.description = vlanDescription;
+                }
+                
+                this.updateVlanOnSwitch(this.selectedSwitch, vlanId, updateData).finally(() => {
+                    // Hide spinner
+                    if (spinner && btnText) {
+                        spinner.classList.add('hidden');
+                        btnText.textContent = 'Save';
+                        saveBtn.disabled = false;
+                    }
+                    modal.classList.remove('active');
+                });
+            });
+        }
+    }
+    
+    cancelPendingRequests() {
+        // Cancel any pending AbortControllers for the previous switch
+        if (this.requestControllers) {
+            this.requestControllers.forEach(controller => {
+                try {
+                    controller.abort();
+                } catch (e) {
+                    // Ignore abort errors
+                }
+            });
+            this.requestControllers.clear();
+        } else {
+            this.requestControllers = new Map();
+        }
+        
+        // Increment tokens to invalidate any pending responses
+        this.overviewReqToken = (this.overviewReqToken || 0) + 1;
+        this.vlansReqToken = (this.vlansReqToken || 0) + 1;
+        this.ifReqToken = (this.ifReqToken || 0) + 1;
+        this.mapReqToken = (this.mapReqToken || 0) + 1;
     }
     
     async loadDeviceOverview() {
@@ -1913,12 +2138,15 @@ class MobileDashboard {
         this.selectedSwitch = selectedSwitch;
         this.currentSwitch = selectedSwitch; // Keep for backward compatibility
         
+        // Cancel any pending requests for the old switch
+        this.cancelPendingRequests();
+        
         if (selectedSwitch) {
-            // Load all manage section data for the selected switch with slight delays to avoid session conflicts
+            // Load all manage section data for the selected switch sequentially to prevent race conditions
             this.loadDeviceOverview();
-            setTimeout(() => this.loadVlansForManage(), 100);
-            setTimeout(() => this.loadInterfacesForManage(), 200);
-            setTimeout(() => this.loadPortMap(), 300);
+            this.loadVlansForManage();
+            this.loadInterfacesForManage(); 
+            this.loadPortMap();
         } else {
             // Clear sections if no switch selected
             this.clearManageSections();
@@ -2112,55 +2340,46 @@ class MobileDashboard {
                 const nameEl = item.querySelector('.vlan-name');
                 const idEl = item.querySelector('.vlan-id');
                 if (idEl && nameEl && idEl.textContent.includes(vlanId.toString())) {
-                    currentVlan.name = nameEl.textContent || '';
+                    currentVlan.name = nameEl.textContent.trim() || '';
+                    const descEl = item.querySelector('.vlan-description');
+                    if (descEl) {
+                        currentVlan.description = descEl.textContent.trim() || '';
+                    }
+                    const stateEl = item.querySelector('.vlan-admin-state, .admin-state');
+                    if (stateEl) {
+                        currentVlan.admin_state = stateEl.textContent.toLowerCase().includes('down') ? 'down' : 'up';
+                    }
                 }
             });
         }
         
-        const modalHtml = `
-            <div class="modal-backdrop" onclick="dashboard.closeVlanEditModal()">
-                <div class="modal-content" onclick="event.stopPropagation()">
-                    <div class="modal-header">
-                        <h3>Edit VLAN ${vlanId}</h3>
-                        <button class="modal-close" onclick="dashboard.closeVlanEditModal()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label for="vlan-name-input">VLAN Name</label>
-                            <input type="text" id="vlan-name-input" class="form-control" 
-                                   value="${currentVlan.name}" placeholder="Enter VLAN name">
-                        </div>
-                        <div class="form-group">
-                            <label for="vlan-desc-input">Description</label>
-                            <input type="text" id="vlan-desc-input" class="form-control" 
-                                   value="${currentVlan.description}" placeholder="Enter description (optional)">
-                        </div>
-                        <div class="form-group">
-                            <label for="vlan-admin-input">Admin State</label>
-                            <select id="vlan-admin-input" class="form-control">
-                                <option value="up" ${currentVlan.admin_state === 'up' ? 'selected' : ''}>Up</option>
-                                <option value="down" ${currentVlan.admin_state === 'down' ? 'selected' : ''}>Down</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="dashboard.closeVlanEditModal()">Cancel</button>
-                        <button class="btn btn-primary" onclick="dashboard.saveVlanEdit(${vlanId})">Save</button>
-                    </div>
-                </div>
-            </div>
-        `;
+        // Populate the modal fields
+        document.getElementById('vlan-id-display').value = `VLAN ${vlanId}`;
+        document.getElementById('vlan-id-value').value = vlanId;
+        document.getElementById('vlan-name').value = currentVlan.name;
+        document.getElementById('vlan-description').value = currentVlan.description;
+        document.getElementById('vlan-admin-state').value = currentVlan.admin_state;
         
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        // Update modal title
+        const modalTitle = document.querySelector('#vlan-edit-modal .modal-title');
+        if (modalTitle) {
+            modalTitle.textContent = `Edit VLAN ${vlanId}`;
+        }
         
-        // Focus the name input
-        setTimeout(() => {
-            const nameInput = document.getElementById('vlan-name-input');
-            if (nameInput) {
-                nameInput.focus();
-                nameInput.select();
-            }
-        }, 100);
+        // Show modal
+        const modal = document.getElementById('vlan-edit-modal');
+        if (modal) {
+            modal.classList.add('active');
+            
+            // Focus first field after animation
+            setTimeout(() => {
+                const nameInput = document.getElementById('vlan-name');
+                if (nameInput) {
+                    nameInput.focus();
+                    nameInput.select();
+                }
+            }, 100);
+        }
     }
     
     closeVlanEditModal() {
@@ -2211,11 +2430,36 @@ class MobileDashboard {
             return;
         }
         
-        // Create edit modal - for now use prompt, will be replaced with proper modal
-        const description = prompt(`Enter description for interface ${interfaceName}:`);
-        if (description === null) return; // User cancelled
+        // Show interface edit modal
+        this.showInterfaceEditModal(interfaceName);
+    }
+    
+    showInterfaceEditModal(interfaceName) {
+        // Find current interface data to pre-populate description
+        const interfacesList = document.getElementById('interfaces-list');
+        let currentDescription = '';
         
-        this.updateInterfaceOnSwitch(this.selectedSwitch, interfaceName, { description: description });
+        if (interfacesList) {
+            const interfaceItems = interfacesList.querySelectorAll('.interface-item');
+            for (const item of interfaceItems) {
+                if (item.querySelector('h4')?.textContent === interfaceName) {
+                    const descElement = item.querySelector('.interface-description');
+                    currentDescription = descElement ? descElement.textContent.replace('Description: ', '') : '';
+                    break;
+                }
+            }
+        }
+        
+        // Populate modal fields
+        document.getElementById('interface-name-display').value = interfaceName;
+        document.getElementById('interface-name-value').value = interfaceName;
+        document.getElementById('interface-description').value = currentDescription;
+        
+        // Show modal
+        const modal = document.getElementById('interface-edit-modal');
+        if (modal) {
+            modal.classList.add('active');
+        }
     }
     
     interfacesReady() {
