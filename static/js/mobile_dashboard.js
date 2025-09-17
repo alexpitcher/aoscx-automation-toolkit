@@ -1233,7 +1233,9 @@ class MobileDashboard {
             const originalTexts = {
                 'add-switch-btn': 'Add Switch',
                 'list-vlans-btn': 'List VLANs',
-                'create-vlan-btn': 'Create VLAN'
+                'create-vlan-btn': 'Create VLAN',
+                'refresh-logs': 'Refresh',
+                'clear-logs': 'Clear'
             };
             button.innerHTML = originalTexts[buttonId] || 'Submit';
         }

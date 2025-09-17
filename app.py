@@ -93,7 +93,11 @@ def detect_switch_capabilities(switch_ip: str, session_obj) -> Dict[str, Any]:
             capabilities['platform_name'] = platform_name
             
             # Platform-specific capability inference based on probe results
-            if '6300' in platform_name:
+            if '6200' in platform_name:
+                capabilities['poe_supported'] = _check_chassis_poe_support(switch_ip, session_obj)
+                capabilities['expected_psu_slots'] = 1
+                capabilities['expected_fan_zones'] = 0
+            elif '6300' in platform_name:
                 # PoE-capable but endpoints don't work via REST API
                 # Check chassis for PoE power data instead
                 capabilities['poe_supported'] = _check_chassis_poe_support(switch_ip, session_obj)
@@ -1256,8 +1260,9 @@ def get_cpu_usage(switch_ip: str, session_obj, capabilities: Dict[str, Any]) -> 
 
 @app.route('/api/switches/<switch_ip>/overview')
 def get_switch_overview(switch_ip: str):
-    """Get real switch overview data including model, ports, PoE, power, fans, CPU."""
-    try:
+    """Get real switch overview data including model, ports, PoE, power, fans, CPU (cached)."""
+    def fetch_overview():
+        # Inner function contains the existing logic; used for caching
         # Two-attempt authentication with session cleanup on failure
         session_obj = None
         
@@ -1276,10 +1281,10 @@ def get_switch_overview(switch_ip: str):
                 else:
                     # Second attempt failed, give up
                     logger.error(f"Authentication failed after 2 attempts for {switch_ip}")
-                    return jsonify({'error': f'Authentication failed: {str(auth_error)}'}), 401
+                    raise Exception(f'Authentication failed: {str(auth_error)}')
         
         if not session_obj:
-            return jsonify({'error': 'Failed to authenticate to switch'}), 401
+            raise Exception('Failed to authenticate to switch')
         
         # Get switch capabilities (reuse existing session)
         capabilities = capabilities_for(switch_ip, session_obj)
@@ -1538,15 +1543,17 @@ def get_switch_overview(switch_ip: str):
             'management_ip': system_data.get('mgmt_intf_status', {}).get('ip', switch_ip)
         }
         
-        api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/overview', {}, None, 200, str(overview_data), 0)
-        return jsonify(overview_data)
-        
+        return overview_data
+    try:
+        # Attempt to use cache for overview (60s TTL)
+        overview = get_cached_or_fetch(switch_cache, switch_ip, 'overview', fetch_overview, ttl=60)
+        api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/overview', {}, None, 200, str(overview), 0)
+        return jsonify(overview)
     except Exception as e:
         logger.error(f"Error getting overview for {switch_ip}: {e}")
-        logger.error(f"Exception type: {type(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        error_response = {'error': f'Failed to get switch overview: {str(e)}', 'details': str(type(e))}
+        error_response = {'error': f'Failed to get switch overview: {str(e)}'}
         api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/overview', {}, None, 500, str(error_response), 0)
         return jsonify(error_response), 500
 
@@ -1791,7 +1798,7 @@ def edit_vlan(switch_ip: str, vlan_id: int):
         api_logger.log_api_call('PATCH', f'/api/switches/{switch_ip}/vlans/{vlan_id}', {}, None, 500, str(error_response), 0)
         return jsonify(error_response), 500
 
-@app.route('/api/switches/<switch_ip>/interfaces/<interface_name>', methods=['PATCH'])
+@app.route('/api/switches/<switch_ip>/interfaces/<path:interface_name>', methods=['PATCH'])
 def edit_interface(switch_ip: str, interface_name: str):
     """Edit an interface on the switch."""
     try:
@@ -1836,19 +1843,20 @@ def edit_interface(switch_ip: str, interface_name: str):
             verify=Config.SSL_VERIFY
         )
         
+        url_path = f'/api/switches/{switch_ip}/interfaces/{interface_name}'
         if patch_response.status_code in [200, 204]:
             result = {'status': 'success', 'message': f'Interface {interface_name} updated successfully'}
-            api_logger.log_api_call('PATCH', f'/api/switches/{switch_ip}/interfaces/{interface_name}', 200, result)
+            api_logger.log_api_call('PATCH', url_path, {}, update_data, 200, str(result), 0)
             return jsonify(result)
         else:
             error_response = {'error': f'Failed to update interface: {patch_response.text}'}
-            api_logger.log_api_call('PATCH', f'/api/switches/{switch_ip}/interfaces/{interface_name}', patch_response.status_code, error_response)
+            api_logger.log_api_call('PATCH', url_path, {}, update_data, patch_response.status_code, str(error_response), 0)
             return jsonify(error_response), patch_response.status_code
             
     except Exception as e:
         logger.error(f"Error editing interface {interface_name} on {switch_ip}: {e}")
         error_response = {'error': f'Failed to edit interface: {str(e)}'}
-        api_logger.log_api_call('PATCH', f'/api/switches/{switch_ip}/interfaces/{interface_name}', 500, error_response)
+        api_logger.log_api_call('PATCH', f'/api/switches/{switch_ip}/interfaces/{interface_name}', {}, None, 500, str(error_response), 0)
         return jsonify(error_response), 500
 
 @app.route('/api/diagnostics/<switch_ip>')
