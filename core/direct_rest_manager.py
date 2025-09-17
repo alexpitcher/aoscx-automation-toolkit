@@ -309,12 +309,24 @@ class DirectRestManager:
         try:
             sess = self._authenticate(switch_ip)
             base = self._get_base_url(switch_ip)
+            start_time = time.time()
             r = sess.get(f"{base}/system", timeout=10)
+            # Log system info GET
+            try:
+                self._log_api_call('GET', f"{base}/system", {}, None, r, start_time, switch_ip)
+            except Exception:
+                pass
             logger.debug(f"GET {base}/system: {r.status_code}")
             if r.status_code != 200:
                 raise Exception(f"System info failed: {r.status_code}")
             info = r.json()
-            cm, msg = self._detect_central_management(switch_ip, sess)
+            # Log Central detection call as well
+            try:
+                cd_start = time.time()
+                # Perform detection and log the POST inside helper
+                cm, msg = self._detect_central_management(switch_ip, sess)
+            except Exception:
+                cm, msg = False, 'Detection error'
             res = {
                 'status':'online',
                 'ip_address':switch_ip,
@@ -349,7 +361,12 @@ class DirectRestManager:
         version = self.switch_api_versions.get(switch_ip,'v1')
         # Attempt bulk details
         if load_details and version in ['v10.04','v10.09','latest']:
+            start_time = time.time()
             r = session.get(f"{base}/system/vlans?depth=2&selector=configuration", timeout=15)
+            try:
+                self._log_api_call('GET', f"{base}/system/vlans?depth=2&selector=configuration", {}, None, r, start_time, switch_ip)
+            except Exception:
+                pass
             logger.debug(f"Depth-2 VLAN GET: {r.status_code}")
             if r.status_code == 200:
                 data = r.json()
@@ -370,7 +387,12 @@ class DirectRestManager:
                 inventory.update_switch_status(switch_ip,'online')
                 return sorted(vlans,key=lambda x: x['id'])
         # Fallback
+        start_time = time.time()
         r = session.get(f"{base}/system/vlans", timeout=10)
+        try:
+            self._log_api_call('GET', f"{base}/system/vlans", {}, None, r, start_time, switch_ip)
+        except Exception:
+            pass
         logger.debug(f"Basic VLAN list GET: {r.status_code}")
         if r.status_code != 200:
             if r.status_code==410:
@@ -385,7 +407,12 @@ class DirectRestManager:
                     if not (1<=vid_num<=4094): continue
                     # fetch detail if requested
                     if load_details:
+                        dstart = time.time()
                         dr = session.get(f"{base}/system/vlans/{vid_num}", timeout=5)
+                        try:
+                            self._log_api_call('GET', f"{base}/system/vlans/{vid_num}", {}, None, dr, dstart, switch_ip)
+                        except Exception:
+                            pass
                         if dr.status_code==200:
                             det=dr.json()
                             name=det.get('name',f'VLAN{vid_num}')
@@ -405,7 +432,12 @@ class DirectRestManager:
                     vid_num=int(uri.rstrip('/').split('/')[-1])
                     if not (1<=vid_num<=4094): continue
                     # same detail fetch logic as above
+                    dstart = time.time()
                     dr = session.get(f"{base}/system/vlans/{vid_num}", timeout=5)
+                    try:
+                        self._log_api_call('GET', f"{base}/system/vlans/{vid_num}", {}, None, dr, dstart, switch_ip)
+                    except Exception:
+                        pass
                     if dr.status_code==200:
                         det=dr.json()
                         name=det.get('name',f'VLAN{vid_num}')

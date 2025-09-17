@@ -36,4 +36,4 @@ ENV FLASK_DEBUG=False \
 EXPOSE 5001
 
 # Use gunicorn for production serving
-CMD ["gunicorn", "-b", "0.0.0.0:5001", "app:app", "--workers", "2", "--threads", "4", "--timeout", "60"]
+CMD ["gunicorn", "-b", "0.0.0.0:5001", "app:app", "--workers", "1", "--threads", "4", "--timeout", "60"]

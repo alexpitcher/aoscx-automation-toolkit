@@ -1867,5 +1867,6 @@ if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
         port=5001,
-        debug=Config.FLASK_DEBUG
+        debug=Config.FLASK_DEBUG,
+        use_reloader=False
     )
