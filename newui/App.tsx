@@ -191,7 +191,7 @@ export default function App() {
       <header className="bg-[#01A982] text-white p-4 shadow-lg">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-white">AOS-CX Automation</h1>
+            <h1 className="text-lg font-semibold text-white">CXEdit</h1>
             <p className="text-xs text-green-100 opacity-90">HPE Aruba Network Management</p>
           </div>
           <div className="text-right">
