@@ -30,6 +30,8 @@
     --warning-color: #f59e0b;
     --error-color: #ef4444;
     --info-color: #3b82f6;
+    --success: var(--success-color);
+    --error: var(--destructive);
     
     /* Shadows */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -1842,17 +1844,9 @@ p, span, div, h1, h2, h3, h4, h5, h6 {
     background: var(--muted);
 }
 
-.port-indicator.port-up .port-status-dot {
-    background: var(--success);
-}
-
-.port-indicator.port-down .port-status-dot {
-    background: var(--destructive);
-}
-
-.port-indicator.port-disabled .port-status-dot {
-    background: var(--muted);
-}
+.port-indicator.port-up .port-status-dot { background: var(--success-color); }
+.port-indicator.port-down .port-status-dot { background: var(--destructive); }
+.port-indicator.port-disabled .port-status-dot { background: #ffffff; border: 1px solid var(--border); }
 
 .port-legend {
     display: flex;
@@ -1874,14 +1868,6 @@ p, span, div, h1, h2, h3, h4, h5, h6 {
     border-radius: 50%;
 }
 
-.legend-dot.port-up {
-    background: var(--success);
-}
-
-.legend-dot.port-down {
-    background: var(--destructive);
-}
-
-.legend-dot.port-disabled {
-    background: var(--muted);
-}
+.legend-dot.port-up { background: var(--success-color); }
+.legend-dot.port-down { background: var(--destructive); }
+.legend-dot.port-disabled { background: #ffffff; border: 1px solid var(--border); }

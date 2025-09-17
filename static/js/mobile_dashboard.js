@@ -2006,15 +2006,46 @@ class MobileDashboard {
             type: iface.type || 'unknown',
             description: iface.description || '',
             mtu: iface.mtu || 0,
+            ipv4: iface.ipv4 || iface.ip4_address || iface.ip_address || '',
+            ipv6: iface.ipv6 || iface.ip6_address || '',
             status: iface.status || (iface.admin_state === 'up' && iface.link_state === 'up' ? 'up' : 
                     iface.admin_state === 'down' ? 'disabled' : 'down')
         };
+    }
+
+    renderManagementInfo(mgmtList) {
+        const container = document.getElementById('management-info');
+        if (!container) return;
+        if (!mgmtList || mgmtList.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        const items = mgmtList.map(m => {
+            const statusBadge = m.status === 'up' ? 'status-online' : (m.status === 'disabled' ? 'status-offline' : 'status-offline');
+            const ipv4 = m.ipv4 ? `${m.ipv4}` : 'Unknown';
+            const ipv6 = m.ipv6 ? `${m.ipv6}` : '';
+            return `
+                <div class="switch-card">
+                    <div class="switch-info">
+                        <div class="switch-details">
+                            <h4 class="font-semibold">${m.name} (Management)</h4>
+                            <div class="switch-meta">IPv4: ${ipv4}${ipv6 ? ` • IPv6: ${ipv6}` : ''}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="status ${statusBadge}">${m.status}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        container.innerHTML = items;
     }
     
     async loadInterfacesForManage() {
         const selectedSwitch = document.getElementById('manage-switch-selector').value;
         if (!selectedSwitch) {
             this.updateInterfacesList([]);
+            this.renderManagementInfo([]);
             return;
         }
         
@@ -2253,6 +2284,7 @@ class MobileDashboard {
             
             if (response.ok && data.interfaces) {
                 let interfaces = (data.interfaces || []).map(iface => this.normalizeInterface(iface));
+                const mgmt = (data.management || []).map(iface => this.normalizeInterface(iface));
                 
                 // Sort interfaces naturally
                 interfaces.sort((a, b) => {
@@ -2268,9 +2300,11 @@ class MobileDashboard {
                 });
                 
                 this.renderPortMap(interfaces);
+                this.renderManagementInfo(mgmt);
             } else {
                 console.error('Failed to load port map:', data.error);
                 this.showPortMapError('Failed to load port map');
+                this.renderManagementInfo([]);
             }
         } catch (error) {
             // Check if this response is still relevant

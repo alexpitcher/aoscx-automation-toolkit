@@ -267,7 +267,7 @@ def _fetch_interfaces_individually(switch_ip: str, session_obj, interfaces_list:
     }
 
 def _fetch_bulk_interfaces(switch_ip: str, session_obj) -> Dict[str, Any]:
-    """Fetch all interface data in bulk with VLAN attributes - no per-port calls."""
+    """Fetch all interface data in bulk with VLAN attributes - returns physical and management interfaces."""
     try:
         # Single bulk call with VLAN attributes
         bulk_url = f"https://{switch_ip}/rest/v10.09/system/interfaces?attributes=name,admin_state,link_state,link_speed,type,description,vlan_tag,vlan_trunks,mtu"
@@ -288,10 +288,15 @@ def _fetch_bulk_interfaces(switch_ip: str, session_obj) -> Dict[str, Any]:
             logger.info(f"Switch {switch_ip} returned URLs instead of data, falling back to individual calls")
             return _fetch_interfaces_individually(switch_ip, session_obj, interfaces_data)
         
-        # Filter to physical interfaces only (exclude VLANs, lag, mgmt)
+        # Separate physical and management interfaces
         physical_interfaces = []
+        management_interfaces = []
         for name, iface_data in interfaces_data.items():
-            if ':' not in name and name.startswith('1/1/'):
+            lower_name = name.lower()
+            is_mgmt = lower_name.startswith('mgmt') or iface_data.get('type', '').lower() == 'mgmt'
+            is_physical = (':' not in name and name.startswith('1/1/'))
+            if not (is_mgmt or is_physical):
+                continue
                 # Normalize interface data
                 admin_state = iface_data.get('admin_state', 'unknown')
                 link_state = iface_data.get('link_state', 'unknown')
@@ -336,21 +341,42 @@ def _fetch_bulk_interfaces(switch_ip: str, session_obj) -> Dict[str, Any]:
                     'tagged_vlans': tagged_vlans
                 }
                 
-                physical_interfaces.append(interface)
+                if is_mgmt:
+                    # Attempt to enrich with IP info from detailed endpoint
+                    try:
+                        encoded = name.replace('/', '%2F')
+                        detail_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded}"
+                        det_resp = session_obj.get(detail_url, timeout=5, verify=Config.SSL_VERIFY)
+                        api_logger.log_api_call('GET', detail_url, {}, None, det_resp.status_code, det_resp.text, 0)
+                        if det_resp.status_code == 200:
+                            det = det_resp.json()
+                            ipv4 = det.get('ip4_address') or det.get('ip_address')
+                            if not ipv4 and isinstance(det.get('ipv4'), dict):
+                                ipv4 = det['ipv4'].get('address') or det['ipv4'].get('primary')
+                            ipv6 = det.get('ip6_address') or det.get('ipv6')
+                            interface['ipv4'] = ipv4
+                            interface['ipv6'] = ipv6
+                    except Exception as e:
+                        logger.debug(f"Mgmt interface detail fetch failed for {name}: {e}")
+                    management_interfaces.append(interface)
+                else:
+                    physical_interfaces.append(interface)
         
         # Sort interfaces naturally by name
         physical_interfaces.sort(key=lambda x: _natural_sort_key(x['name']))
+        management_interfaces.sort(key=lambda x: _natural_sort_key(x['name']))
         
         logger.info(f"Fetched {len(physical_interfaces)} interfaces for {switch_ip} in bulk")
         
         return {
             'interfaces': physical_interfaces,
+            'management': management_interfaces,
             'total_count': len(physical_interfaces)
         }
         
     except Exception as e:
         logger.error(f"Failed to fetch bulk interfaces for {switch_ip}: {e}")
-        return {'interfaces': [], 'total_count': 0}
+        return {'interfaces': [], 'management': [], 'total_count': 0}
 
 def _format_interface_speed(link_speed):
     """Format interface speed for display."""
