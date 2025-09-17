@@ -3,7 +3,7 @@ Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 """
 import logging
 import time
-from flask import Flask, request, jsonify, render_template, redirect, make_response
+from flask import Flask, request, jsonify, render_template, redirect, make_response, send_from_directory
 from typing import Dict, Any, List, Optional
 import requests
 from config.settings import Config
@@ -499,6 +499,11 @@ def dashboard():
 def mobile_dashboard():
     """Render the mobile-first dashboard."""
     return render_template('mobile_dashboard.html')
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve the app favicon from the static directory."""
+    return send_from_directory('static', 'cxedit-icon.jpg')
 
 # Switch management endpoints
 @app.route('/api/switches', methods=['GET'])
