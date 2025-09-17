@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+
+# Git
+.git
+.gitignore
+
+# Local and OS
+.DS_Store
+
+# Project artifacts
+archive/
+diagnostics_*/
+*.cookie
+cookies.txt
+
+# Node/Frontend cache (if any)
+node_modules/
+dist/
+build/
+
+tests/
+test.py
+smoke_tests.sh
+cleanup_sessions.py
+.claude/

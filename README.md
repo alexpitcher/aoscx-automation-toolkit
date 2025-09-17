@@ -23,6 +23,25 @@ CXEdit is a mobile‑first AOS‑CX automation dashboard built on Flask with a s
   - Default route redirects to mobile UI: `http://localhost:5001/`
   - Desktop view (optional): `http://localhost:5001/?desktop=true`
 
+## Docker
+
+- Build image locally
+  - `docker build -t cxedit:local .`
+  - `docker run --rm -p 5001:5001 --env-file .env cxedit:local`
+
+- Using Compose
+  - `docker compose up --build -d`
+  - Visit `http://localhost:5001`
+
+- Published image (GHCR)
+  - Image: `ghcr.io/<owner>/aoscx-automation-toolkit:latest` or a version tag
+  - Pull: `docker pull ghcr.io/<owner>/aoscx-automation-toolkit:v1.2`
+  - Run: `docker run --rm -p 5001:5001 ghcr.io/<owner>/aoscx-automation-toolkit:v1.2`
+
+Notes:
+- The GitHub Actions workflow builds and publishes on pushes to `main` and when you create tags like `v1.2`.
+- If the package is private by default, set visibility to public under GitHub Packages for this repo.
+
 ## UI Notes
 
 - Mobile UI
@@ -48,4 +67,3 @@ CXEdit is a mobile‑first AOS‑CX automation dashboard built on Flask with a s
 - Templates: `templates/mobile_dashboard.html`, `templates/dashboard.html`
 - Static assets: `static/`
 - Mobile React prototype (optional): `newui/`
-
