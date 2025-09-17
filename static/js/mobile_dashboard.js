@@ -1680,7 +1680,7 @@ class MobileDashboard {
                 }
                 
                 // Show spinner
-                const spinner = saveBtn.querySelector('.spinner');
+                const spinner = saveBtn.querySelector('.btn-spinner');
                 const btnText = saveBtn.querySelector('.btn-text');
                 if (spinner && btnText) {
                     spinner.classList.remove('hidden');
