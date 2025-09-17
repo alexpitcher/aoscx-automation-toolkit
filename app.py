@@ -200,75 +200,69 @@ def get_cached_interfaces(switch_ip: str, session_obj=None) -> Dict[str, Any]:
     return interface_data
 
 def _fetch_interfaces_individually(switch_ip: str, session_obj, interfaces_list: Dict[str, str]) -> Dict[str, Any]:
-    """Fallback method to fetch interface data individually when bulk call returns URLs."""
+    """Fallback method to fetch interface data individually when bulk call returns URLs.
+    Uses concurrent fetches and short timeouts to avoid hangs on large port counts.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    physical_interface_names = [name for name in interfaces_list.keys()
+                                if ':' not in name and name.startswith('1/1/')]
     physical_interfaces = []
-    
-    # Filter to physical interfaces only 
-    physical_interface_names = [name for name in interfaces_list.keys() 
-                               if ':' not in name and name.startswith('1/1/')]
-    
-    for name in physical_interface_names:
+
+    def fetch_one(name: str):
         try:
-            # URL encode the interface name
             encoded_name = name.replace('/', '%2F')
             iface_url = f"https://{switch_ip}/rest/v10.09/system/interfaces/{encoded_name}"
-            iface_response = session_obj.get(iface_url, timeout=5, verify=Config.SSL_VERIFY)
-            
-            if iface_response.status_code == 200:
-                iface_data = iface_response.json()
-                
-                # Normalize interface data (same logic as bulk method)
-                admin_state = iface_data.get('admin_state', 'unknown')
-                link_state = iface_data.get('link_state', 'unknown')
-                
-                # Apply state normalization rules
-                if admin_state == 'down':
-                    status = 'disabled'
-                elif admin_state == 'up' and link_state == 'up':
-                    status = 'up'
-                else:
-                    status = 'down'
-                
-                # Format speed for display
-                link_speed = iface_data.get('link_speed', 0) or 0
-                speed_display = _format_interface_speed(link_speed)
-                
-                # Process VLAN membership
-                vlan_tag = iface_data.get('vlan_tag', {})
-                vlan_trunks = iface_data.get('vlan_trunks', {})
-                
-                # Extract untagged VLAN ID (vlan_tag is a dict with VLAN ID as key)
-                untagged_vlan = None
-                if isinstance(vlan_tag, dict) and vlan_tag:
-                    untagged_vlan = int(list(vlan_tag.keys())[0])
-                
-                # Extract tagged VLANs (vlan_trunks is a dict with VLAN IDs as keys)
-                tagged_vlans = []
-                if isinstance(vlan_trunks, dict):
-                    tagged_vlans = [int(vlan_id) for vlan_id in vlan_trunks.keys()]
-                
-                physical_interfaces.append({
-                    'name': name,
-                    'admin_state': admin_state,
-                    'link_state': link_state,
-                    'status': status,
-                    'link_speed': link_speed,
-                    'speed_display': speed_display,
-                    'type': iface_data.get('type', 'unknown'),
-                    'description': iface_data.get('description', ''),
-                    'mtu': iface_data.get('mtu', 1500),
-                    'untagged_vlan': untagged_vlan,
-                    'tagged_vlans': tagged_vlans
-                })
-                
+            resp = session_obj.get(iface_url, timeout=2.5, verify=Config.SSL_VERIFY)
+            api_logger.log_api_call('GET', iface_url, {}, None, resp.status_code, resp.text, 0)
+            if resp.status_code != 200:
+                return None
+            iface_data = resp.json()
+            admin_state = iface_data.get('admin_state', 'unknown')
+            link_state = iface_data.get('link_state', 'unknown')
+            if admin_state == 'down':
+                status = 'disabled'
+            elif admin_state == 'up' and link_state == 'up':
+                status = 'up'
+            else:
+                status = 'down'
+            link_speed = iface_data.get('link_speed', 0) or 0
+            speed_display = _format_interface_speed(link_speed)
+            vlan_tag = iface_data.get('vlan_tag', {})
+            vlan_trunks = iface_data.get('vlan_trunks', {})
+            untagged_vlan = None
+            if isinstance(vlan_tag, dict) and vlan_tag:
+                untagged_vlan = int(list(vlan_tag.keys())[0])
+            tagged_vlans = []
+            if isinstance(vlan_trunks, dict):
+                tagged_vlans = [int(vlan_id) for vlan_id in vlan_trunks.keys()]
+            return {
+                'name': name,
+                'admin_state': admin_state,
+                'link_state': link_state,
+                'status': status,
+                'link_speed': link_speed,
+                'speed_display': speed_display,
+                'type': iface_data.get('type', 'unknown'),
+                'description': iface_data.get('description', '') or '',
+                'mtu': iface_data.get('mtu', 1500) or 1500,
+                'untagged_vlan': untagged_vlan,
+                'tagged_vlans': tagged_vlans
+            }
         except Exception as e:
             logger.debug(f"Failed to fetch interface {name}: {e}")
-            continue
-    
-    return {
-        'interfaces': physical_interfaces,
-        'total_count': len(physical_interfaces)
-    }
+            return None
+
+    # Fetch concurrently with a reasonable worker count
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(fetch_one, name): name for name in physical_interface_names}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                physical_interfaces.append(result)
+
+    # Sort for consistency
+    physical_interfaces.sort(key=lambda x: _natural_sort_key(x['name']))
+    return {'interfaces': physical_interfaces, 'total_count': len(physical_interfaces)}
 
 def _fetch_bulk_interfaces(switch_ip: str, session_obj) -> Dict[str, Any]:
     """Fetch all interface data in bulk with VLAN attributes - returns physical and management interfaces."""

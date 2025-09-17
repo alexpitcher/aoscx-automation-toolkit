@@ -1749,6 +1749,17 @@ class MobileDashboard {
             
             if (response.ok) {
                 console.log('Device overview data:', data);
+                // Update switch status in local cache to reflect errors
+                const status = (data.health && data.health.status === 'ERRORS') ? 'error' : 'online';
+                if (this.switches.has(selectedSwitch)) {
+                    const sw = this.switches.get(selectedSwitch);
+                    sw.status = status;
+                    sw.last_seen = new Date().toISOString();
+                    this.switches.set(selectedSwitch, sw);
+                    this.updateDashboardStats();
+                    this.updateNetworkStatus();
+                    this.renderSwitches();
+                }
                 this.updateDeviceInfo({
                     model: data.model || 'Unknown',
                     portCount: data.port_count || '0',
