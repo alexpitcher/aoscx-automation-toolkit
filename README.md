@@ -49,7 +49,3 @@ CXEdit is a mobile‑first AOS‑CX automation dashboard built on Flask with a s
 - Static assets: `static/`
 - Mobile React prototype (optional): `newui/`
 
-## License
-
-Proprietary or per repository policy. Do not distribute without permission.
-
