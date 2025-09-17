@@ -5,8 +5,7 @@ FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/home/appuser/.local/bin:$PATH"
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
@@ -17,13 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install dependencies
 COPY requirements.txt ./
-RUN pip install --user -r requirements.txt && \
-    pip install --user gunicorn
+RUN pip install -r requirements.txt && \
+    pip install gunicorn
 
 # Copy app
 COPY . .
 
-# Non-root user
+# Non-root user (after installing system packages)
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
@@ -37,5 +36,4 @@ ENV FLASK_DEBUG=False \
 EXPOSE 5001
 
 # Use gunicorn for production serving
-CMD ["/home/appuser/.local/bin/gunicorn", "-b", "0.0.0.0:5001", "app:app", "--workers", "2", "--threads", "4", "--timeout", "60"]
-
+CMD ["gunicorn", "-b", "0.0.0.0:5001", "app:app", "--workers", "2", "--threads", "4", "--timeout", "60"]
