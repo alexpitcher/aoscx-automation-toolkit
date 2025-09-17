@@ -188,7 +188,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="bg-[#01A982] text-white p-4 shadow-lg">
+      <header className="text-white p-4 shadow-lg" style={{ backgroundColor: '#01A982' }}>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-white">CXEdit</h1>

@@ -689,10 +689,21 @@ body {
 
 /* Additional utilities for bottom nav opacity and safe areas */
 .bg-white { background-color: #ffffff; }
+.bg-primary { background-color: var(--primary); }
 .border-t { border-top: 1px solid var(--border); }
 .border-border { border-color: var(--border); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .pb-20-safe { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+
+/* Title bar / header */
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    background-color: var(--primary);
+    color: #ffffff;
+}
+.safe-top { padding-top: env(safe-area-inset-top); }
 
 /* Animation utilities */
 .animate-spin {
