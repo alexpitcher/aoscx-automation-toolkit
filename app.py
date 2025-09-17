@@ -1523,6 +1523,20 @@ def get_switch_overview(switch_ip: str):
                 health_status = "DEGRADED"
                 health_reasons.append("CPU utilization high")
         
+        # Update inventory switch status to reflect PSU/fan errors on dashboard counts
+        if psu_errors or fan_errors:
+            reason = "; ".join([
+                psu.get('detail', {}).get('bay_label', f"PSU {psu['slot']}") + ": " + get_human_readable_status(psu['raw_status'])
+                for psu in psu_errors
+            ] + [
+                f"Fan {fan['slot']}: " + get_human_readable_status(fan['raw_status'])
+                for fan in fan_errors
+            ])
+            inventory.update_switch_status(switch_ip, 'error', error_message=reason)
+        else:
+            # Keep existing status if degraded/ok but ensure not lingering error
+            inventory.update_switch_status(switch_ip, 'online')
+
         overview_data = {
             'model': f"Aruba CX {platform_name}",
             'hostname': hostname,
@@ -1730,9 +1744,42 @@ def get_switch_interfaces(switch_ip: str):
         except Exception as cache_error:
             logger.warning(f"Cache error, falling back to direct fetch: {cache_error}")
             interfaces_data = fetch_interfaces()
+
+        # Ensure management interface is present using system mgmt_intf_status if not found in bulk
+        try:
+            if not interfaces_data.get('management'):
+                # Reuse existing authenticated session to get system mgmt status
+                session_obj = direct_rest_manager._authenticate(switch_ip)
+                sys_url = f"https://{switch_ip}/rest/v10.09/system"
+                sys_resp = session_obj.get(sys_url, timeout=5, verify=Config.SSL_VERIFY)
+                api_logger.log_api_call('GET', sys_url, {}, None, sys_resp.status_code, sys_resp.text, 0)
+                if sys_resp.status_code == 200:
+                    sys_data = sys_resp.json()
+                    mgmt = sys_data.get('mgmt_intf_status') or {}
+                    ipv4 = mgmt.get('ip') or mgmt.get('ip_address') or mgmt.get('ipv4')
+                    status = (mgmt.get('status') or mgmt.get('link_state') or 'unknown').lower()
+                    # Normalize status to up/down/disabled
+                    if status == 'down':
+                        norm = 'disabled'
+                    elif status == 'up' or ipv4:
+                        norm = 'up'
+                    else:
+                        norm = 'down'
+                    interfaces_data['management'] = [{
+                        'name': 'mgmt',
+                        'admin_state': 'up' if norm == 'up' else 'down',
+                        'link_state': 'up' if norm == 'up' else 'down',
+                        'status': norm,
+                        'description': 'Management interface',
+                        'ipv4': ipv4 or '',
+                        'ipv6': mgmt.get('ipv6') or ''
+                    }]
+        except Exception as e:
+            logger.debug(f"Failed to populate management interface from system: {e}")
         
         result = {
             'interfaces': interfaces_data.get('interfaces', []),
+            'management': interfaces_data.get('management', []),
             'total_count': interfaces_data.get('total_count', 0)
         }
         api_logger.log_api_call('GET', f'/api/switches/{switch_ip}/interfaces', {}, None, 200, str(result), 0)
