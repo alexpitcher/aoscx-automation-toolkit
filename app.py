@@ -4,6 +4,7 @@ Enhanced PyAOS-CX Automation Toolkit - Main Flask Application
 import logging
 import time
 from flask import Flask, request, jsonify, render_template, redirect, make_response, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 from typing import Dict, Any, List, Optional
 import requests
 from config.settings import Config
@@ -470,6 +471,8 @@ def _calculate_vlan_membership(interfaces: List[Dict[str, Any]]) -> Dict[int, Di
 
 # Initialize Flask application
 app = Flask(__name__)
+# Ensure correct scheme/host when running behind reverse proxies
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 # Validate configuration on startup
 config_errors = Config.validate()
@@ -504,6 +507,11 @@ def mobile_dashboard():
 def favicon():
     """Serve the app favicon from the static directory."""
     return send_from_directory('static', 'cxedit-icon.jpg')
+
+@app.route('/healthz')
+def healthz():
+    """Simple health check endpoint for reverse proxy/monitors."""
+    return jsonify({"status": "ok"}), 200
 
 # Switch management endpoints
 @app.route('/api/switches', methods=['GET'])
