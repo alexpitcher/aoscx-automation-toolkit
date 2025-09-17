@@ -139,13 +139,21 @@ class MobileDashboard {
 
         // Handle switch actions with event delegation
         document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('refresh-switch')) {
-                const switchIp = e.target.dataset.switchIp;
-                this.refreshSwitch(switchIp);
+            const refreshBtn = e.target.closest && e.target.closest('.refresh-switch');
+            if (refreshBtn) {
+                const switchIp = refreshBtn.dataset.switchIp || this.currentSwitch;
+                if (switchIp) {
+                    this.refreshSwitch(switchIp);
+                }
+                return;
             }
-            if (e.target.classList.contains('remove-switch')) {
-                const switchIp = e.target.dataset.switchIp;
-                this.removeSwitch(switchIp);
+
+            const removeBtn = e.target.closest && e.target.closest('.remove-switch');
+            if (removeBtn) {
+                const switchIp = removeBtn.dataset.switchIp || this.currentSwitch;
+                if (switchIp) {
+                    this.removeSwitch(switchIp);
+                }
             }
         });
 
@@ -415,7 +423,7 @@ class MobileDashboard {
 
     async refreshSwitch(switchIp) {
         try {
-            const response = await fetch(`/api/switches/${switchIp}/test`);
+            const response = await fetch(`/api/switch/test?switch_ip=${encodeURIComponent(switchIp)}`);
             const data = await response.json();
             
             // Update switch info

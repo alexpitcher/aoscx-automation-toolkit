@@ -755,6 +755,26 @@ def test_switch_connection(switch_ip: str):
             'error_message': str(e)
         })
 
+@app.route('/api/switch/test', methods=['GET'])
+def test_switch_connection_query():
+    """Test connection using a query parameter to avoid path issues behind some proxies."""
+    switch_ip = request.args.get('switch_ip', '').strip()
+    if not switch_ip:
+        return jsonify({'error': 'switch_ip parameter is required'}), 400
+    switch_info = inventory.get_switch(switch_ip)
+    if not switch_info:
+        return jsonify({'error': f'Switch {switch_ip} not found in inventory'}), 404
+    try:
+        result = switch_manager_factory.test_connection(switch_info)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error testing connection to {switch_ip}: {e}")
+        return jsonify({
+            'status': 'error',
+            'ip_address': switch_ip,
+            'error_message': str(e)
+        })
+
 @app.route('/api/vlans', methods=['GET'])
 def get_vlans():
     """Get VLANs from a specific switch using appropriate manager."""
