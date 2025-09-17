@@ -203,7 +203,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto pb-20">
+      <main className="flex-1 overflow-auto" style={{ paddingBottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
         {renderActiveTab()}
       </main>
 

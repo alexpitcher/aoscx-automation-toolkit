@@ -488,20 +488,11 @@ for switch_ip in Config.DEFAULT_SWITCHES:
 
 @app.route('/')
 def dashboard():
-    """Render the main dashboard with mobile detection."""
-    user_agent = request.headers.get('User-Agent', '').lower()
-    
-    # Detect mobile devices
-    mobile_indicators = ['mobile', 'android', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone']
-    is_mobile = any(indicator in user_agent for indicator in mobile_indicators)
-    
-    # Check for explicit preference or force parameter
+    """Launch to the mobile UI by default; desktop only when explicitly requested."""
+    # Preserve ability to access desktop explicitly
     force_desktop = request.args.get('desktop', '').lower() == 'true'
-    force_mobile = request.args.get('mobile', '').lower() == 'true'
-    
-    if force_mobile or (is_mobile and not force_desktop):
+    if not force_desktop:
         return redirect('/mobile')
-    
     return render_template('dashboard.html')
 
 @app.route('/mobile')

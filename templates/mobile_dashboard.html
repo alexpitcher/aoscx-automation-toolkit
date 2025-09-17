@@ -22,9 +22,6 @@
                 <div class="text-xs text-green-100 opacity-90 mb-1">
                     Last updated: <span id="last-refresh">--:--:--</span>
                 </div>
-                <a href="/?desktop=true" class="text-xs text-green-100 opacity-90 underline">
-                    Desktop View
-                </a>
             </div>
         </div>
     </header>
@@ -33,7 +30,7 @@
     <div id="alert-container"></div>
 
     <!-- Main Content Area -->
-    <main class="flex-1 overflow-auto pb-20 bg-background min-h-screen">
+    <main class="flex-1 overflow-auto pb-20-safe bg-background min-h-screen">
         <!-- Dashboard Tab -->
         <div id="dashboard-tab" class="tab-content active p-4 space-y-6" style="display: block;">
             <!-- Quick Stats Grid -->
@@ -650,7 +647,7 @@
     </main>
 
     <!-- Bottom Navigation -->
-    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-50">
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-border z-50 safe-bottom">
         <div class="flex">
             <button class="nav-tab active" data-tab="dashboard">
                 <svg class="h-5 w-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -687,6 +687,13 @@ body {
 .opacity-50 { opacity: 0.5; }
 .opacity-90 { opacity: 0.9; }
 
+/* Additional utilities for bottom nav opacity and safe areas */
+.bg-white { background-color: #ffffff; }
+.border-t { border-top: 1px solid var(--border); }
+.border-border { border-color: var(--border); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.pb-20-safe { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
+
 /* Animation utilities */
 .animate-spin {
     animation: spin 1s linear infinite;
