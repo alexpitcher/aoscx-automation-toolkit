@@ -375,6 +375,7 @@ class MobileDashboard {
                 this.switches.set(switchKey, data.switch);
                 this.renderSwitches();
                 this.updateSwitchSelector();
+                this.updateLogsFilterSwitches();
                 this.updateDashboardStats();
                 this.showAlert(data.message, 'success');
                 event.target.reset();
@@ -391,8 +392,8 @@ class MobileDashboard {
                     toggleText.textContent = 'Show Credentials';
                 }
                 
-                // Test connection immediately
-                this.refreshSwitch(switchKey);
+                // Refresh all devices to populate latest data
+                this.refreshAllSwitches();
                 
                 // Provide haptic feedback on mobile
                 if (navigator.haptic) {

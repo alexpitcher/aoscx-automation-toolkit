@@ -657,10 +657,21 @@ def add_direct_switch(data):
             if inventory.add_switch(ip_address, name):
                 switch_info = inventory.get_switch(ip_address)
                 logger.info(f"Successfully added switch: {ip_address} using {credentials_used}")
+                # Immediately retrieve device data to enrich cache and UI
+                try:
+                    result = switch_manager_factory.test_connection(switch_info)
+                    # switch_manager updates inventory status; prefer enriched dict if available
+                    enriched = {
+                        **switch_info.to_dict(),
+                        **{k: v for k, v in result.items() if k in ['status','last_seen','firmware_version','model','api_version','error_message']}
+                    }
+                except Exception as e:
+                    logger.warning(f"Post-add device info retrieval failed for {ip_address}: {e}")
+                    enriched = switch_info.to_dict()
                 return jsonify({
                     'status': 'success',
                     'message': f'Switch {ip_address} added successfully using {credentials_used}',
-                    'switch': switch_info.to_dict()
+                    'switch': enriched
                 })
             else:
                 return jsonify({
